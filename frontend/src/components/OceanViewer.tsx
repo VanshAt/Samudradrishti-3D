@@ -7,7 +7,11 @@ import {
 } from "react";
 import * as Cesium from "cesium";
 import { demoStations } from "../data/demoStations";
-import type { ObservationStation } from "../types/ocean";
+import type { ObservationStation, DepthLevel, OceanVariable } from "../types/ocean";
+import { getTemperatureLayer } from "../data/demoTemperature";
+import { getSalinityLayer } from "../data/demoSalinity";
+import { getCurrentLayer } from "../data/demoCurrents";
+import { getTemperatureColor, getSalinityColor, getCurrentSpeedColor } from "../utils/oceanColors";
 
 export interface OceanViewerProps {
   showArgo: boolean;
@@ -15,6 +19,9 @@ export interface OceanViewerProps {
   showGliders: boolean;
   selectedStation: ObservationStation | null;
   onSelectStation: (station: ObservationStation | null) => void;
+  activeVariable: OceanVariable | null;
+  selectedDepth: DepthLevel;
+  modelLayerOpacity: number;
 }
 
 export interface OceanViewerRef {
@@ -39,12 +46,51 @@ const flyToBayOfBengal = (viewer: Cesium.Viewer): void => {
   });
 };
 
+function getCurrentArrowEnd(
+  longitude: number,
+  latitude: number,
+  directionDegrees: number,
+  speedMs: number
+): { endLongitude: number; endLatitude: number } {
+  // Arrow length scaling based on speed (between 0.2 and 0.65 degrees approx)
+  const lengthDegrees = Math.max(0.2, Math.min(0.65, speedMs * 0.8));
+  
+  // Math.sin and Math.cos take radians
+  // 0 degrees points North, 90 points East
+  // Since standard Math angles start with 0 East and go counter-clockwise,
+  // we do:
+  // deltaLat (North/South) = cos(direction)
+  // deltaLon (East/West) = sin(direction)
+  
+  const directionRadians = (directionDegrees * Math.PI) / 180;
+  
+  const deltaLatitude = lengthDegrees * Math.cos(directionRadians);
+  const deltaLongitude = lengthDegrees * Math.sin(directionRadians);
+  
+  return {
+    endLongitude: longitude + deltaLongitude,
+    endLatitude: latitude + deltaLatitude,
+  };
+}
+
 const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) => {
-  const { showArgo, showBuoys, showGliders, selectedStation, onSelectStation } = props;
+  const { 
+    showArgo, 
+    showBuoys, 
+    showGliders, 
+    selectedStation, 
+    onSelectStation,
+    activeVariable,
+    selectedDepth,
+    modelLayerOpacity
+  } = props;
   
   const cesiumContainerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
-  const dataSourceRef = useRef<Cesium.CustomDataSource | null>(null);
+  const stationSourceRef = useRef<Cesium.CustomDataSource | null>(null);
+  const tempSourceRef = useRef<Cesium.CustomDataSource | null>(null);
+  const salinitySourceRef = useRef<Cesium.CustomDataSource | null>(null);
+  const currentsSourceRef = useRef<Cesium.CustomDataSource | null>(null);
   
   const [tooltipState, setTooltipState] = useState<{
     visible: boolean;
@@ -112,10 +158,23 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
     });
     viewer.imageryLayers.addImageryProvider(darkImageryProvider);
 
+    // Create a CustomDataSource for temperature grid (render below stations)
+    const tempSource = new Cesium.CustomDataSource("temperatureGrid");
+    viewer.dataSources.add(tempSource);
+    tempSourceRef.current = tempSource;
+
+    const salinitySource = new Cesium.CustomDataSource("salinityGrid");
+    viewer.dataSources.add(salinitySource);
+    salinitySourceRef.current = salinitySource;
+
+    const currentsSource = new Cesium.CustomDataSource("currentsGrid");
+    viewer.dataSources.add(currentsSource);
+    currentsSourceRef.current = currentsSource;
+
     // Create a CustomDataSource for stations to group them cleanly
-    const dataSource = new Cesium.CustomDataSource("oceanStations");
-    viewer.dataSources.add(dataSource);
-    dataSourceRef.current = dataSource;
+    const stationSource = new Cesium.CustomDataSource("oceanStations");
+    viewer.dataSources.add(stationSource);
+    stationSourceRef.current = stationSource;
 
     flyToBayOfBengal(viewer);
 
@@ -124,14 +183,122 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
         viewer.destroy();
       }
       viewerRef.current = null;
-      dataSourceRef.current = null;
+      stationSourceRef.current = null;
+      tempSourceRef.current = null;
+      salinitySourceRef.current = null;
+      currentsSourceRef.current = null;
     };
   }, []);
+
+  // Update Temperature Entities
+  useEffect(() => {
+    const tempSource = tempSourceRef.current;
+    if (!tempSource) return;
+
+    tempSource.entities.removeAll();
+
+    if (activeVariable !== "temperature") return;
+
+    const layerData = getTemperatureLayer(selectedDepth);
+    const { points, minValue, maxValue } = layerData;
+
+    const latHalfStep = 1.0;
+    const lonHalfStep = 1.0625;
+
+    points.forEach((pt, index) => {
+      const color = getTemperatureColor(pt.temperatureC, minValue, maxValue, modelLayerOpacity);
+      
+      tempSource.entities.add({
+        id: `temp-${index}`,
+        rectangle: {
+          coordinates: Cesium.Rectangle.fromDegrees(
+            pt.longitude - lonHalfStep,
+            pt.latitude - latHalfStep,
+            pt.longitude + lonHalfStep,
+            pt.latitude + latHalfStep
+          ),
+          material: new Cesium.ColorMaterialProperty(color),
+          outline: false,
+          height: 0, 
+        }
+      });
+    });
+  }, [activeVariable, selectedDepth, modelLayerOpacity]);
+
+  // Update Salinity Entities
+  useEffect(() => {
+    const salinitySource = salinitySourceRef.current;
+    if (!salinitySource) return;
+
+    salinitySource.entities.removeAll();
+
+    if (activeVariable !== "salinity") return;
+
+    const layerData = getSalinityLayer(selectedDepth);
+    const { points, minValue, maxValue } = layerData;
+
+    const latHalfStep = 1.0;
+    const lonHalfStep = 1.0625;
+
+    points.forEach((pt, index) => {
+      const color = getSalinityColor(pt.salinityPsu, minValue, maxValue, modelLayerOpacity);
+      
+      salinitySource.entities.add({
+        id: `salinity-${index}`,
+        rectangle: {
+          coordinates: Cesium.Rectangle.fromDegrees(
+            pt.longitude - lonHalfStep,
+            pt.latitude - latHalfStep,
+            pt.longitude + lonHalfStep,
+            pt.latitude + latHalfStep
+          ),
+          material: new Cesium.ColorMaterialProperty(color),
+          outline: false,
+          height: 0, 
+        }
+      });
+    });
+  }, [activeVariable, selectedDepth, modelLayerOpacity]);
+
+  // Update Current Entities
+  useEffect(() => {
+    const currentsSource = currentsSourceRef.current;
+    if (!currentsSource) return;
+
+    currentsSource.entities.removeAll();
+
+    if (activeVariable !== "currents") return;
+
+    const layerData = getCurrentLayer(selectedDepth);
+    const { points, minValue, maxValue } = layerData;
+
+    points.forEach((pt, index) => {
+      const color = getCurrentSpeedColor(pt.speedMs, minValue, maxValue, modelLayerOpacity);
+      const { endLongitude, endLatitude } = getCurrentArrowEnd(pt.longitude, pt.latitude, pt.directionDegrees, pt.speedMs);
+      
+      currentsSource.entities.add({
+        id: `current-${index}`,
+        polyline: {
+          positions: Cesium.Cartesian3.fromDegreesArray([
+            pt.longitude, pt.latitude,
+            endLongitude, endLatitude
+          ]),
+          width: 4,
+          material: new Cesium.PolylineArrowMaterialProperty(color),
+        },
+        // Optional small dot at the tail for clarity
+        point: {
+          pixelSize: 4,
+          color: color,
+        }
+      });
+    });
+  }, [activeVariable, selectedDepth, modelLayerOpacity]);
 
   // Update Station Entities when filters or selection changes
   useEffect(() => {
     const viewer = viewerRef.current;
-    const dataSource = dataSourceRef.current;
+    const dataSource = stationSourceRef.current;
 
     if (!viewer || !dataSource) return;
 
@@ -172,7 +339,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
           color,
           outlineColor,
           outlineWidth,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY, // Show above terrain/globe
+          disableDepthTestDistance: Number.POSITIVE_INFINITY, // Show above terrain/globe and temp grid
         },
         properties: new Cesium.PropertyBag({ stationId: station.id }),
       });
@@ -206,6 +373,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
             outline: true,
             outlineColor: color,
             outlineWidth: 2,
+            height: 10, // slightly above the surface/temp grid to avoid z-fighting
           }
         });
       }
@@ -221,23 +389,33 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
     // Hover (Tooltip)
     handler.setInputAction((movement: Cesium.ScreenSpaceEventHandler.MotionEvent) => {
-      const pickedObject = viewer.scene.pick(movement.endPosition);
+      const pickedObjects = viewer.scene.drillPick(movement.endPosition);
       
-      if (Cesium.defined(pickedObject) && pickedObject.id && pickedObject.id.properties) {
-        const stationId = pickedObject.id.properties.getValue(viewer.clock.currentTime)?.stationId;
-        if (stationId) {
-          (viewer.container as HTMLElement).style.cursor = "pointer";
-          const hoveredStation = demoStations.find(s => s.id === stationId);
-          if (hoveredStation) {
-            setTooltipState({
-              visible: true,
-              x: movement.endPosition.x,
-              y: movement.endPosition.y,
-              station: hoveredStation,
-            });
+      // We use drillPick because we might pick a temperature rectangle first, we want to find if there's a station
+      let stationIdFound: string | null = null;
+      
+      for (const pickedObject of pickedObjects) {
+        if (Cesium.defined(pickedObject) && pickedObject.id && pickedObject.id.properties) {
+          const stationId = pickedObject.id.properties.getValue(viewer.clock.currentTime)?.stationId;
+          if (stationId) {
+            stationIdFound = stationId;
+            break;
           }
-          return;
         }
+      }
+
+      if (stationIdFound) {
+        (viewer.container as HTMLElement).style.cursor = "pointer";
+        const hoveredStation = demoStations.find(s => s.id === stationIdFound);
+        if (hoveredStation) {
+          setTooltipState({
+            visible: true,
+            x: movement.endPosition.x,
+            y: movement.endPosition.y,
+            station: hoveredStation,
+          });
+        }
+        return;
       }
       
       (viewer.container as HTMLElement).style.cursor = "default";
@@ -247,18 +425,27 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
     // Click (Select)
     handler.setInputAction((movement: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
-      const pickedObject = viewer.scene.pick(movement.position);
+      const pickedObjects = viewer.scene.drillPick(movement.position);
       
-      if (Cesium.defined(pickedObject) && pickedObject.id && pickedObject.id.properties) {
-        const stationId = pickedObject.id.properties.getValue(viewer.clock.currentTime)?.stationId;
-        if (stationId) {
-          const clickedStation = demoStations.find(s => s.id === stationId) || null;
-          onSelectStation(clickedStation);
-          return;
+      let stationIdFound: string | null = null;
+
+      for (const pickedObject of pickedObjects) {
+        if (Cesium.defined(pickedObject) && pickedObject.id && pickedObject.id.properties) {
+          const stationId = pickedObject.id.properties.getValue(viewer.clock.currentTime)?.stationId;
+          if (stationId) {
+            stationIdFound = stationId;
+            break;
+          }
         }
       }
+
+      if (stationIdFound) {
+        const clickedStation = demoStations.find(s => s.id === stationIdFound) || null;
+        onSelectStation(clickedStation);
+        return;
+      }
       
-      // Clicked on empty ocean or unclickable entity
+      // Clicked on empty ocean or unclickable entity (or just temperature grid)
       onSelectStation(null);
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
@@ -273,22 +460,6 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
         ref={cesiumContainerRef}
         className="absolute inset-0 h-full w-full"
       />
-
-      {/* Title Overlay */}
-      <div className="pointer-events-none absolute left-5 top-5 z-10">
-        <div className="rounded-xl border border-cyan-300/25 bg-[#061522]/80 px-4 py-3 shadow-lg backdrop-blur-md">
-          <h2 className="text-lg font-bold tracking-wide text-[#E6FBFF]">
-            3D Ocean Viewer
-          </h2>
-
-          <div className="mt-1 flex items-center gap-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#00D4D8]" />
-            <p className="text-sm font-medium text-[#8EB7C2]">
-              Bay of Bengal • Demo Mode
-            </p>
-          </div>
-        </div>
-      </div>
 
       {/* Custom HTML Tooltip */}
       {tooltipState.visible && tooltipState.station && (

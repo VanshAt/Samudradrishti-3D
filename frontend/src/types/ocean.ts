@@ -25,3 +25,75 @@ export interface ObservationStation {
   platformDescription: string;
   route?: RoutePoint[];
 }
+
+export type OceanVariable = "temperature" | "salinity" | "currents";
+
+export type DepthLevel = 0 | 50 | 100 | 200;
+
+export interface TemperatureGridPoint {
+  latitude: number;
+  longitude: number;
+  depthM: DepthLevel;
+  temperatureC: number;
+}
+
+export interface TemperatureLayerData {
+  variable: "temperature";
+  depthM: DepthLevel;
+  units: "°C";
+  minValue: number;
+  maxValue: number;
+  points: TemperatureGridPoint[];
+}
+
+export interface SalinityGridPoint {
+  latitude: number;
+  longitude: number;
+  depthM: DepthLevel;
+  salinityPsu: number;
+}
+
+export interface SalinityLayerData {
+  variable: "salinity";
+  depthM: DepthLevel;
+  units: "PSU";
+  minValue: number;
+  maxValue: number;
+  points: SalinityGridPoint[];
+}
+
+export interface CurrentGridPoint {
+  latitude: number;
+  longitude: number;
+  depthM: DepthLevel;
+  uMs: number;
+  vMs: number;
+  speedMs: number;
+  directionDegrees: number;
+}
+
+export interface CurrentLayerData {
+  variable: "currents";
+  depthM: DepthLevel;
+  units: "m/s";
+  minValue: number;
+  maxValue: number;
+  points: CurrentGridPoint[];
+}
+
+export type OceanConditionSeverity = "routine" | "caution" | "elevated";
+
+export interface OceanConditionReason {
+  label: string;
+  detail: string;
+}
+
+export interface OceanConditionInsight {
+  severity: OceanConditionSeverity;
+  score: number;
+  summary: string;
+  reasons: OceanConditionReason[];
+  recommendedAction: string;
+  isDemo: true;
+}
+
