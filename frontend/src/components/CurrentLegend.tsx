@@ -1,17 +1,21 @@
-import type { DepthLevel, OceanVariable } from '../types/ocean';
+import type { DepthLevel, OceanVariable, TimeIndex } from '../types/ocean';
+import { formatDemoTime } from "../data/demoTime";
 
 interface CurrentLegendProps {
   activeVariable: OceanVariable | null;
   selectedDepth: DepthLevel;
   minValue: number;
   maxValue: number;
+  timeIso: string;
+  timeIndex: TimeIndex;
 }
 
 export default function CurrentLegend({ 
   activeVariable, 
   selectedDepth, 
   minValue, 
-  maxValue 
+  maxValue,
+  timeIso
 }: CurrentLegendProps) {
   if (activeVariable !== "currents") return null;
 
@@ -27,7 +31,9 @@ export default function CurrentLegend({
       </div>
       <div className="text-xs text-slate-400 mb-3 pb-2 border-b border-cyan-900/50">
         <div>Vector field • {selectedDepth} m</div>
+        <div className="text-[10px] mt-1 text-slate-500">{formatDemoTime(timeIso)}</div>
         <div className="text-[10px] mt-1 text-slate-500">Demo numerical model data</div>
+        <div className="text-[10px] mt-1 text-slate-500">Demo time series &bull; deterministic local data</div>
       </div>
       
       <div className="flex gap-3 h-32">

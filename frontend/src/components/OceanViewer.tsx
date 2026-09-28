@@ -6,22 +6,25 @@ import {
   useState,
 } from "react";
 import * as Cesium from "cesium";
-import { demoStations } from "../data/demoStations";
 import type { ObservationStation, DepthLevel, OceanVariable } from "../types/ocean";
 import { getTemperatureLayer } from "../data/demoTemperature";
 import { getSalinityLayer } from "../data/demoSalinity";
 import { getCurrentLayer } from "../data/demoCurrents";
 import { getTemperatureColor, getSalinityColor, getCurrentSpeedColor } from "../utils/oceanColors";
+import type { TimeIndex } from "../types/ocean";
 
 export interface OceanViewerProps {
   showArgo: boolean;
   showBuoys: boolean;
   showGliders: boolean;
-  selectedStation: ObservationStation | null;
-  onSelectStation: (station: ObservationStation | null) => void;
+  stations: ObservationStation[];
+  selectedStationId: string | null;
+  onSelectStation: (stationId: string | null) => void;
   activeVariable: OceanVariable | null;
   selectedDepth: DepthLevel;
   modelLayerOpacity: number;
+  activeTimeIndex: TimeIndex;
+  activeTimeIso: string;
 }
 
 export interface OceanViewerRef {
@@ -77,12 +80,14 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
   const { 
     showArgo, 
     showBuoys, 
-    showGliders, 
-    selectedStation, 
+    showGliders,
+    stations,
+    selectedStationId, 
     onSelectStation,
     activeVariable,
     selectedDepth,
-    modelLayerOpacity
+    modelLayerOpacity,
+    activeTimeIndex
   } = props;
   
   const cesiumContainerRef = useRef<HTMLDivElement | null>(null);
@@ -199,7 +204,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
     if (activeVariable !== "temperature") return;
 
-    const layerData = getTemperatureLayer(selectedDepth);
+    const layerData = getTemperatureLayer(selectedDepth, activeTimeIndex);
     const { points, minValue, maxValue } = layerData;
 
     const latHalfStep = 1.0;
@@ -223,7 +228,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
         }
       });
     });
-  }, [activeVariable, selectedDepth, modelLayerOpacity]);
+  }, [activeVariable, selectedDepth, modelLayerOpacity, activeTimeIndex]);
 
   // Update Salinity Entities
   useEffect(() => {
@@ -234,7 +239,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
     if (activeVariable !== "salinity") return;
 
-    const layerData = getSalinityLayer(selectedDepth);
+    const layerData = getSalinityLayer(selectedDepth, activeTimeIndex);
     const { points, minValue, maxValue } = layerData;
 
     const latHalfStep = 1.0;
@@ -258,7 +263,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
         }
       });
     });
-  }, [activeVariable, selectedDepth, modelLayerOpacity]);
+  }, [activeVariable, selectedDepth, modelLayerOpacity, activeTimeIndex]);
 
   // Update Current Entities
   useEffect(() => {
@@ -269,7 +274,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
     if (activeVariable !== "currents") return;
 
-    const layerData = getCurrentLayer(selectedDepth);
+    const layerData = getCurrentLayer(selectedDepth, activeTimeIndex);
     const { points, minValue, maxValue } = layerData;
 
     points.forEach((pt, index) => {
@@ -293,7 +298,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
         }
       });
     });
-  }, [activeVariable, selectedDepth, modelLayerOpacity]);
+  }, [activeVariable, selectedDepth, modelLayerOpacity, activeTimeIndex]);
 
   // Update Station Entities when filters or selection changes
   useEffect(() => {
@@ -304,7 +309,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
     dataSource.entities.removeAll();
 
-    const filteredStations = demoStations.filter(station => {
+    const filteredStations = stations.filter(station => {
       if (station.type === 'argo' && showArgo) return true;
       if (station.type === 'buoy' && showBuoys) return true;
       if (station.type === 'glider' && showGliders) return true;
@@ -312,7 +317,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
     });
 
     filteredStations.forEach(station => {
-      const isSelected = selectedStation?.id === station.id;
+      const isSelected = selectedStationId === station.id;
       
       let color: Cesium.Color;
       let outlineColor = isSelected ? Cesium.Color.WHITE : Cesium.Color.BLACK;
@@ -378,7 +383,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
         });
       }
     });
-  }, [showArgo, showBuoys, showGliders, selectedStation]);
+  }, [showArgo, showBuoys, showGliders, selectedStationId, stations]);
 
   // Handle Interactions (Hover & Click)
   useEffect(() => {
@@ -406,7 +411,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
       if (stationIdFound) {
         (viewer.container as HTMLElement).style.cursor = "pointer";
-        const hoveredStation = demoStations.find(s => s.id === stationIdFound);
+        const hoveredStation = stations.find(s => s.id === stationIdFound);
         if (hoveredStation) {
           setTooltipState({
             visible: true,
@@ -440,8 +445,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
       }
 
       if (stationIdFound) {
-        const clickedStation = demoStations.find(s => s.id === stationIdFound) || null;
-        onSelectStation(clickedStation);
+        onSelectStation(stationIdFound);
         return;
       }
       
@@ -452,7 +456,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
     return () => {
       handler.destroy();
     };
-  }, [onSelectStation]);
+  }, [onSelectStation, stations]);
 
   return (
     <div className="relative h-full w-full overflow-hidden">

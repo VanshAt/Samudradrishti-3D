@@ -97,3 +97,27 @@ export interface OceanConditionInsight {
   isDemo: true;
 }
 
+export type TimeIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
+
+export interface TimedTemperatureLayerData extends TemperatureLayerData {
+  timeIndex: TimeIndex;
+  timeIso: string;
+}
+
+export interface TimedSalinityLayerData extends SalinityLayerData {
+  timeIndex: TimeIndex;
+  timeIso: string;
+}
+
+export interface TimedCurrentLayerData extends CurrentLayerData {
+  timeIndex: TimeIndex;
+  timeIso: string;
+}
+
+export interface StationSnapshot {
+  stationId: string;
+  timeIndex: TimeIndex;
+  timestamp: string;
+  latestObservation: LatestObservation;
+}
+

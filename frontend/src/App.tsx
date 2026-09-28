@@ -1,9 +1,9 @@
 import { useRef, useState, useEffect } from 'react';
-import { Waves, Settings, Clock, AlertTriangle, Info, Play, SkipBack, SkipForward, X } from 'lucide-react';
+import { Waves, Settings, AlertTriangle, Info, X } from 'lucide-react';
 import OceanViewer from './components/OceanViewer';
 import type { OceanViewerRef } from './components/OceanViewer';
 import { demoStations } from './data/demoStations';
-import type { ObservationStation, DepthLevel, OceanVariable } from './types/ocean';
+import type { DepthLevel, OceanVariable } from './types/ocean';
 import TemperatureLegend from './components/TemperatureLegend';
 import SalinityLegend from './components/SalinityLegend';
 import CurrentLegend from './components/CurrentLegend';
@@ -11,6 +11,11 @@ import OceanConditionInsightPanel from './components/OceanConditionInsightPanel'
 import { getTemperatureLayer } from './data/demoTemperature';
 import { getSalinityLayer } from './data/demoSalinity';
 import { getCurrentLayer } from './data/demoCurrents';
+import { getTimedStations } from './data/demoStationSnapshots';
+import { DEMO_TIME_STEPS, formatDemoTime } from './data/demoTime';
+import type { TimeIndex } from './types/ocean';
+import { TimelineControl } from './components/TimelineControl';
+import { useMemo } from 'react';
 
 function App() {
   const viewerRef = useRef<OceanViewerRef>(null);
@@ -18,26 +23,62 @@ function App() {
   const [showArgo, setShowArgo] = useState(true);
   const [showBuoys, setShowBuoys] = useState(true);
   const [showGliders, setShowGliders] = useState(true);
-  const [selectedStation, setSelectedStation] = useState<ObservationStation | null>(null);
+  const [selectedStationId, setSelectedStationId] = useState<string | null>(null);
 
   const [activeVariable, setActiveVariable] = useState<OceanVariable | null>(null);
   const [selectedDepth, setSelectedDepth] = useState<DepthLevel>(0);
   const [modelLayerOpacity, setModelLayerOpacity] = useState(0.65);
 
+  const [activeTimeIndex, setActiveTimeIndex] = useState<TimeIndex>(0);
+  const [isTimelinePlaying, setIsTimelinePlaying] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState<0.5 | 1 | 2>(1);
+
+  const activeTimeIso = useMemo(() => DEMO_TIME_STEPS[activeTimeIndex], [activeTimeIndex]);
+  const timedStations = useMemo(() => getTimedStations(demoStations, activeTimeIndex), [activeTimeIndex]);
+  const selectedTimedStation = useMemo(() => {
+    if (!selectedStationId) return null;
+    return timedStations.find(s => s.id === selectedStationId) || null;
+  }, [selectedStationId, timedStations]);
+
   useEffect(() => {
-    if (!selectedStation) {
+    (window as any).selectStation = (id: string) => {
+      setSelectedStationId(id);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedStationId) {
       return;
     }
+    const station = demoStations.find(s => s.id === selectedStationId);
+    if (!station) return;
 
     const selectedTypeIsHidden =
-      (selectedStation.type === "argo" && !showArgo) ||
-      (selectedStation.type === "buoy" && !showBuoys) ||
-      (selectedStation.type === "glider" && !showGliders);
+      (station.type === "argo" && !showArgo) ||
+      (station.type === "buoy" && !showBuoys) ||
+      (station.type === "glider" && !showGliders);
 
     if (selectedTypeIsHidden) {
-      setSelectedStation(null);
+      setSelectedStationId(null);
     }
-  }, [selectedStation, showArgo, showBuoys, showGliders]);
+  }, [selectedStationId, showArgo, showBuoys, showGliders]);
+
+  useEffect(() => {
+    if (!isTimelinePlaying) return;
+
+    let intervalMs = 1400;
+    if (playbackSpeed === 0.5) intervalMs = 2800;
+    if (playbackSpeed === 2) intervalMs = 700;
+
+    const timer = setInterval(() => {
+      setActiveTimeIndex(prev => {
+        const next = prev + 1;
+        return next > 7 ? 0 : next as TimeIndex;
+      });
+    }, intervalMs);
+
+    return () => clearInterval(timer);
+  }, [isTimelinePlaying, playbackSpeed]);
 
   const handleResetView = () => {
     if (viewerRef.current) {
@@ -49,7 +90,7 @@ function App() {
   const buoyCount = demoStations.filter(s => s.type === 'buoy').length;
   const gliderCount = demoStations.filter(s => s.type === 'glider').length;
 
-  const tempLayer = getTemperatureLayer(selectedDepth);
+  const tempLayer = getTemperatureLayer(selectedDepth, activeTimeIndex);
 
   return (
     <div className="flex flex-col h-screen w-full bg-ocean-dark text-slate-200 font-sans">
@@ -221,16 +262,20 @@ function App() {
 
         {/* 3. Main 3D Viewer Area */}
         <main className="flex-1 relative bg-[#030b14] flex flex-col items-center justify-center">
+          <button id="hack-select" onClick={() => (window as any).selectStation('buoy-1')} className="w-1 h-1 opacity-0 absolute z-50 left-0 top-0"></button>
           <OceanViewer 
             ref={viewerRef} 
             showArgo={showArgo}
             showBuoys={showBuoys}
             showGliders={showGliders}
-            selectedStation={selectedStation}
-            onSelectStation={setSelectedStation}
+            stations={timedStations}
+            selectedStationId={selectedStationId}
+            onSelectStation={setSelectedStationId}
             activeVariable={activeVariable}
             selectedDepth={selectedDepth}
             modelLayerOpacity={modelLayerOpacity}
+            activeTimeIndex={activeTimeIndex}
+            activeTimeIso={activeTimeIso}
           />
 
           <TemperatureLegend 
@@ -238,20 +283,26 @@ function App() {
             selectedDepth={selectedDepth}
             minValue={tempLayer.minValue}
             maxValue={tempLayer.maxValue}
+            timeIso={activeTimeIso}
+            timeIndex={activeTimeIndex}
           />
           
           <SalinityLegend 
             activeVariable={activeVariable}
             selectedDepth={selectedDepth}
-            minValue={activeVariable === "salinity" ? getSalinityLayer(selectedDepth).minValue : 0}
-            maxValue={activeVariable === "salinity" ? getSalinityLayer(selectedDepth).maxValue : 0}
+            minValue={activeVariable === "salinity" ? getSalinityLayer(selectedDepth, activeTimeIndex).minValue : 0}
+            maxValue={activeVariable === "salinity" ? getSalinityLayer(selectedDepth, activeTimeIndex).maxValue : 0}
+            timeIso={activeTimeIso}
+            timeIndex={activeTimeIndex}
           />
           
           <CurrentLegend 
             activeVariable={activeVariable}
             selectedDepth={selectedDepth}
-            minValue={activeVariable === "currents" ? getCurrentLayer(selectedDepth).minValue : 0}
-            maxValue={activeVariable === "currents" ? getCurrentLayer(selectedDepth).maxValue : 0}
+            minValue={activeVariable === "currents" ? getCurrentLayer(selectedDepth, activeTimeIndex).minValue : 0}
+            maxValue={activeVariable === "currents" ? getCurrentLayer(selectedDepth, activeTimeIndex).maxValue : 0}
+            timeIso={activeTimeIso}
+            timeIndex={activeTimeIndex}
           />
 
           {/* Depth Indicator Overlay */}
@@ -270,6 +321,24 @@ function App() {
               </>
             )}
           </div>
+
+          {/* Viewer Overlay */}
+          <div className="pointer-events-none absolute top-4 right-4 z-10 flex flex-col items-end gap-1 text-right">
+            <h2 className="text-2xl font-bold text-white drop-shadow-md">3D Ocean Viewer</h2>
+            <div className="text-sm text-slate-300 drop-shadow">
+              {!activeVariable 
+                ? "Bay of Bengal • Demo Mode" 
+                : activeVariable === "temperature"
+                ? `Bay of Bengal • Temperature at ${selectedDepth} m`
+                : activeVariable === "salinity"
+                ? `Bay of Bengal • Salinity at ${selectedDepth} m`
+                : `Bay of Bengal • Currents at ${selectedDepth} m`}
+            </div>
+            <div className="mt-1 rounded bg-ocean-dark/80 px-2 py-1 text-xs font-mono text-ocean-accent border border-ocean-accent/30 backdrop-blur-sm shadow">
+              {formatDemoTime(activeTimeIso)}
+            </div>
+            <div className="mt-0.5 text-[10px] text-slate-400 font-semibold bg-ocean-dark/50 px-1 rounded shadow">Demo time series</div>
+          </div>
         </main>
 
         {/* 5. Right Information Panel */}
@@ -281,7 +350,7 @@ function App() {
             </h2>
           </div>
 
-          {!selectedStation ? (
+          {!selectedTimedStation ? (
             <div className="flex-1 p-6 flex flex-col items-center justify-center text-center">
               <div className="space-y-4">
                 <AlertTriangle size={36} className="mx-auto text-slate-500" />
@@ -297,11 +366,11 @@ function App() {
             <div className="flex-1 p-5 flex flex-col gap-4">
               <div className="flex justify-between items-start">
                 <div>
-                  <h3 className="text-lg font-bold text-white">{selectedStation.name}</h3>
-                  <p className="text-xs text-slate-400 font-mono">ID: {selectedStation.id}</p>
+                  <h3 className="text-lg font-bold text-white">{selectedTimedStation.name}</h3>
+                  <p className="text-xs text-slate-400 font-mono">ID: {selectedTimedStation.id}</p>
                 </div>
                 <button 
-                  onClick={() => setSelectedStation(null)}
+                  onClick={() => setSelectedStationId(null)}
                   className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
                   aria-label="Clear selection"
                 >
@@ -309,45 +378,44 @@ function App() {
                 </button>
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex gap-2 items-center flex-wrap">
                 <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${
-                  selectedStation.type === 'argo' ? 'bg-cyan-900/40 text-cyan-300 border-cyan-700/50' : 
-                  selectedStation.type === 'buoy' ? 'bg-yellow-900/40 text-yellow-300 border-yellow-700/50' :
+                  selectedTimedStation.type === 'argo' ? 'bg-cyan-900/40 text-cyan-300 border-cyan-700/50' : 
+                  selectedTimedStation.type === 'buoy' ? 'bg-yellow-900/40 text-yellow-300 border-yellow-700/50' :
                   'bg-purple-900/40 text-purple-300 border-purple-700/50'
                 }`}>
-                  {selectedStation.type}
+                  {selectedTimedStation.type}
                 </span>
                 <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${
-                  selectedStation.qualityFlag === 'GOOD' ? 'bg-green-900/40 text-green-400 border-green-700/50' : 
-                  selectedStation.qualityFlag === 'SUSPECT' ? 'bg-amber-900/40 text-amber-400 border-amber-700/50' :
+                  selectedTimedStation.qualityFlag === 'GOOD' ? 'bg-green-900/40 text-green-400 border-green-700/50' : 
+                  selectedTimedStation.qualityFlag === 'SUSPECT' ? 'bg-amber-900/40 text-amber-400 border-amber-700/50' :
                   'bg-slate-800/80 text-slate-400 border-slate-700'
                 }`}>
-                  {selectedStation.qualityFlag}
+                  {selectedTimedStation.qualityFlag}
                 </span>
-                <span className="px-2 py-1 text-[10px] bg-slate-800/80 text-slate-400 border border-slate-700 rounded ml-auto">
-                  Demo observation data
+                <span className="px-2 py-1 text-[10px] bg-blue-900/40 text-blue-300 border border-blue-700/50 rounded ml-auto">
+                  Demo time series
                 </span>
               </div>
 
               <div className="grid grid-cols-2 gap-3 mt-2">
                 <div className="bg-[#030b14] p-3 rounded border border-slate-800">
                   <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Latitude</div>
-                  <div className="font-mono text-sm text-slate-200">{selectedStation.latitude.toFixed(3)}° N</div>
+                  <div className="font-mono text-sm text-slate-200">{selectedTimedStation.latitude.toFixed(3)}° N</div>
                 </div>
                 <div className="bg-[#030b14] p-3 rounded border border-slate-800">
                   <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Longitude</div>
-                  <div className="font-mono text-sm text-slate-200">{selectedStation.longitude.toFixed(3)}° E</div>
+                  <div className="font-mono text-sm text-slate-200">{selectedTimedStation.longitude.toFixed(3)}° E</div>
                 </div>
               </div>
 
               <div className="bg-[#030b14] p-3 rounded border border-slate-800">
-                <div className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Last Observation</div>
+                <div className="flex justify-between items-center mb-1">
+                  <div className="text-[10px] text-slate-400 uppercase tracking-wider">Last Observation</div>
+                  <span className="text-[9px] text-slate-500">Demo time series</span>
+                </div>
                 <div className="font-mono text-sm text-slate-200">
-                  {new Date(selectedStation.timestamp).toLocaleString(undefined, { 
-                    dateStyle: 'medium', 
-                    timeStyle: 'short',
-                    timeZone: 'UTC' 
-                  })} UTC
+                  {formatDemoTime(selectedTimedStation.timestamp)}
                 </div>
               </div>
 
@@ -356,27 +424,27 @@ function App() {
                 
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-slate-400">Depth</span>
-                  <span className="text-sm font-medium text-white">{selectedStation.depthM.toFixed(1)} m</span>
+                  <span className="text-sm font-medium text-white">{selectedTimedStation.depthM.toFixed(1)} m</span>
                 </div>
                 
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-slate-400">Temperature</span>
-                  <span className="text-sm font-medium text-white">{selectedStation.latestObservation.temperatureC.toFixed(2)} °C</span>
+                  <span className="text-sm font-medium text-white">{selectedTimedStation.latestObservation.temperatureC.toFixed(2)} °C</span>
                 </div>
                 
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-slate-400">Salinity</span>
-                  <span className="text-sm font-medium text-white">{selectedStation.latestObservation.salinityPsu.toFixed(2)} PSU</span>
+                  <span className="text-sm font-medium text-white">{selectedTimedStation.latestObservation.salinityPsu.toFixed(2)} PSU</span>
                 </div>
                 
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-slate-400">Current Speed</span>
-                  <span className="text-sm font-medium text-white">{selectedStation.latestObservation.currentSpeedMs.toFixed(2)} m/s</span>
+                  <span className="text-sm font-medium text-white">{selectedTimedStation.latestObservation.currentSpeedMs.toFixed(2)} m/s</span>
                 </div>
               </div>
               
               <OceanConditionInsightPanel 
-                station={selectedStation} 
+                station={selectedTimedStation} 
                 activeVariable={activeVariable} 
                 selectedDepth={selectedDepth} 
               />
@@ -384,7 +452,7 @@ function App() {
               <div className="mt-4 pt-4 border-t border-slate-800">
                 <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-wider mb-2">Platform Description</h4>
                 <p className="text-xs text-slate-400 leading-relaxed">
-                  {selectedStation.platformDescription}
+                  {selectedTimedStation.platformDescription}
                 </p>
               </div>
             </div>
@@ -392,32 +460,17 @@ function App() {
         </aside>
       </div>
 
-      {/* 4. Bottom Timeline */}
-      <footer className="h-16 bg-ocean-panel border-t border-cyan-900/50 shrink-0 flex items-center px-4 gap-6 z-10 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
-        <div className="flex items-center gap-2">
-          <button className="p-2 hover:bg-slate-700 rounded text-slate-300 hover:text-white transition-colors">
-            <SkipBack size={18} />
-          </button>
-          <button className="p-2 bg-ocean-accent/20 hover:bg-ocean-accent/30 rounded text-ocean-accent transition-colors">
-            <Play size={18} className="ml-0.5" />
-          </button>
-          <button className="p-2 hover:bg-slate-700 rounded text-slate-300 hover:text-white transition-colors">
-            <SkipForward size={18} />
-          </button>
-        </div>
-
-        <div className="flex-1 flex items-center gap-4">
-          <div className="w-full h-1.5 bg-slate-700 rounded-full overflow-hidden relative">
-            <div className="absolute left-0 top-0 bottom-0 w-1/4 bg-ocean-accent rounded-full"></div>
-            {/* Markers placeholder */}
-            <div className="absolute left-1/4 top-1/2 -translate-y-1/2 w-3 h-3 bg-white border-2 border-ocean-accent rounded-full shadow cursor-pointer"></div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 text-sm text-slate-300 bg-ocean-dark/50 px-3 py-1.5 rounded border border-slate-700">
-          <Clock size={14} className="text-ocean-accent" />
-          <span className="font-mono">2026-09-23 12:00 UTC</span>
-        </div>
+      <footer className="shrink-0 z-10 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] relative">
+        <TimelineControl 
+          activeTimeIndex={activeTimeIndex}
+          isPlaying={isTimelinePlaying}
+          playbackSpeed={playbackSpeed}
+          onPrevious={() => setActiveTimeIndex(prev => prev === 0 ? 7 : (prev - 1) as TimeIndex)}
+          onNext={() => setActiveTimeIndex(prev => prev === 7 ? 0 : (prev + 1) as TimeIndex)}
+          onTogglePlay={() => setIsTimelinePlaying(!isTimelinePlaying)}
+          onTimeIndexChange={(idx) => setActiveTimeIndex(idx)}
+          onPlaybackSpeedChange={(speed) => setPlaybackSpeed(speed)}
+        />
       </footer>
     </div>
   );

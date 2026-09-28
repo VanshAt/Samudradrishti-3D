@@ -3,7 +3,8 @@
  * Not live INCOIS ocean-model output.
  */
 
-import type { DepthLevel, SalinityGridPoint, SalinityLayerData } from "../types/ocean";
+import type { DepthLevel, SalinityGridPoint, TimedSalinityLayerData, TimeIndex } from "../types/ocean";
+import { DEMO_TIME_STEPS } from "./demoTime";
 
 const LAT_START = 8;
 const LAT_END = 22;
@@ -57,8 +58,20 @@ const dataByDepth: Record<DepthLevel, SalinityGridPoint[]> = {
   200: generatePointsForDepth(200),
 };
 
-export function getSalinityLayer(depthM: DepthLevel): SalinityLayerData {
-  const points = dataByDepth[depthM];
+export function getSalinityLayer(depthM: DepthLevel, timeIndex: TimeIndex): TimedSalinityLayerData {
+  const basePoints = dataByDepth[depthM];
+  
+  const depthScale = depthM === 0 ? 1 : depthM === 50 ? 0.7 : depthM === 100 ? 0.4 : 0.2;
+  
+  const points = basePoints.map(p => {
+    const phase = p.latitude * 0.2 + p.longitude * 0.2 + timeIndex * 0.7;
+    // approximately -0.25 to +0.25 PSU
+    const offset = Math.sin(phase) * 0.25 * depthScale;
+    return {
+      ...p,
+      salinityPsu: Number((p.salinityPsu + offset).toFixed(2))
+    };
+  });
   
   let minValue = Infinity;
   let maxValue = -Infinity;
@@ -74,6 +87,8 @@ export function getSalinityLayer(depthM: DepthLevel): SalinityLayerData {
     units: "PSU",
     minValue,
     maxValue,
-    points
+    points,
+    timeIndex,
+    timeIso: DEMO_TIME_STEPS[timeIndex],
   };
 }

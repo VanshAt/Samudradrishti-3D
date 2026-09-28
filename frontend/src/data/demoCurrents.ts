@@ -3,7 +3,8 @@
  * Not live INCOIS ocean-model output.
  */
 
-import type { DepthLevel, CurrentGridPoint, CurrentLayerData } from "../types/ocean";
+import type { DepthLevel, CurrentGridPoint, TimedCurrentLayerData, TimeIndex } from "../types/ocean";
+import { DEMO_TIME_STEPS } from "./demoTime";
 
 const LAT_START = 8;
 const LAT_END = 22;
@@ -105,8 +106,38 @@ const dataByDepth: Record<DepthLevel, CurrentGridPoint[]> = {
   200: generatePointsForDepth(200),
 };
 
-export function getCurrentLayer(depthM: DepthLevel): CurrentLayerData {
-  const points = dataByDepth[depthM];
+export function getCurrentLayer(depthM: DepthLevel, timeIndex: TimeIndex): TimedCurrentLayerData {
+  const basePoints = dataByDepth[depthM];
+  
+  const depthScale = depthM === 0 ? 1 : depthM === 50 ? 0.6 : depthM === 100 ? 0.4 : 0.2;
+  
+  const points = basePoints.map(p => {
+    // phase for time variation
+    const phaseU = p.latitude * 0.15 + timeIndex * 0.5;
+    const phaseV = p.longitude * 0.15 + timeIndex * 0.5;
+    
+    // add a deterministic time component
+    const offsetU = Math.sin(phaseU) * 0.15 * depthScale;
+    const offsetV = Math.cos(phaseV) * 0.15 * depthScale;
+    
+    let uMs = p.uMs + offsetU;
+    let vMs = p.vMs + offsetV;
+    
+    const speedMs = Number(Math.sqrt(uMs * uMs + vMs * vMs).toFixed(3));
+    
+    let directionDegrees = Math.atan2(uMs, vMs) * (180 / Math.PI);
+    if (directionDegrees < 0) {
+      directionDegrees += 360;
+    }
+
+    return {
+      ...p,
+      uMs: Number(uMs.toFixed(3)),
+      vMs: Number(vMs.toFixed(3)),
+      speedMs,
+      directionDegrees
+    };
+  });
   
   let minValue = Infinity;
   let maxValue = -Infinity;
@@ -122,7 +153,9 @@ export function getCurrentLayer(depthM: DepthLevel): CurrentLayerData {
     units: "m/s",
     minValue,
     maxValue,
-    points
+    points,
+    timeIndex,
+    timeIso: DEMO_TIME_STEPS[timeIndex],
   };
 }
 
@@ -131,5 +164,5 @@ const surfaceElevatedCurrentCount = dataByDepth[0].filter(
 ).length;
 
 console.info(
-  `[Demo Currents] Surface vectors >= 0.60 m/s: ${surfaceElevatedCurrentCount}`
+  `[Demo Currents] Base Surface vectors >= 0.60 m/s: ${surfaceElevatedCurrentCount}`
 );
