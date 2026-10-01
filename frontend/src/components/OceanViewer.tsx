@@ -12,6 +12,8 @@ import { getSalinityLayer } from "../data/demoSalinity";
 import { getCurrentLayer } from "../data/demoCurrents";
 import { getTemperatureColor, getSalinityColor, getCurrentSpeedColor } from "../utils/oceanColors";
 import type { TimeIndex } from "../types/ocean";
+import type { OceanAlert } from "../types/alerts";
+import { AlertLegend } from "./AlertLegend";
 
 export interface OceanViewerProps {
   showArgo: boolean;
@@ -25,6 +27,10 @@ export interface OceanViewerProps {
   modelLayerOpacity: number;
   activeTimeIndex: TimeIndex;
   activeTimeIso: string;
+  alerts: OceanAlert[];
+  selectedAlertId: string | null;
+  onSelectAlert?: (alertId: string | null) => void;
+  onFocusAlertReady?: (focus: (alert: OceanAlert) => void) => void;
 }
 
 export interface OceanViewerRef {
@@ -87,7 +93,11 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
     activeVariable,
     selectedDepth,
     modelLayerOpacity,
-    activeTimeIndex
+    activeTimeIndex,
+    alerts,
+    selectedAlertId,
+    onSelectAlert,
+    onFocusAlertReady
   } = props;
   
   const cesiumContainerRef = useRef<HTMLDivElement | null>(null);
@@ -96,6 +106,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
   const tempSourceRef = useRef<Cesium.CustomDataSource | null>(null);
   const salinitySourceRef = useRef<Cesium.CustomDataSource | null>(null);
   const currentsSourceRef = useRef<Cesium.CustomDataSource | null>(null);
+  const oceanAlertsDataSourceRef = useRef<Cesium.CustomDataSource | null>(null);
   
   const [tooltipState, setTooltipState] = useState<{
     visible: boolean;
@@ -116,6 +127,19 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
       }
     },
   }));
+
+  useEffect(() => {
+    if (onFocusAlertReady) {
+      onFocusAlertReady((alert: OceanAlert) => {
+        if (viewerRef.current) {
+          viewerRef.current.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(alert.longitude, alert.latitude, 400000),
+            duration: 1.5,
+          });
+        }
+      });
+    }
+  }, [onFocusAlertReady]);
 
   // Initial Viewer Setup
   useEffect(() => {
@@ -181,6 +205,10 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
     viewer.dataSources.add(stationSource);
     stationSourceRef.current = stationSource;
 
+    const oceanAlertsDataSource = new Cesium.CustomDataSource("oceanAlerts");
+    viewer.dataSources.add(oceanAlertsDataSource);
+    oceanAlertsDataSourceRef.current = oceanAlertsDataSource;
+
     flyToBayOfBengal(viewer);
 
     return () => {
@@ -192,6 +220,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
       tempSourceRef.current = null;
       salinitySourceRef.current = null;
       currentsSourceRef.current = null;
+      oceanAlertsDataSourceRef.current = null;
     };
   }, []);
 
@@ -385,6 +414,61 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
     });
   }, [showArgo, showBuoys, showGliders, selectedStationId, stations]);
 
+  // Update Alerts Entities
+  useEffect(() => {
+    const dataSource = oceanAlertsDataSourceRef.current;
+    if (!dataSource) return;
+
+    dataSource.entities.removeAll();
+
+    alerts.forEach((alert) => {
+      const isSelected = selectedAlertId === alert.id;
+      let color: Cesium.Color;
+      let radius: number;
+      if (alert.severity === "high") {
+        color = Cesium.Color.fromCssColorString("#EF4444"); // red
+        radius = isSelected ? 30000 : 25000;
+      } else if (alert.severity === "medium") {
+        color = Cesium.Color.fromCssColorString("#F59E0B"); // amber
+        radius = isSelected ? 23000 : 18000;
+      } else {
+        color = Cesium.Color.fromCssColorString("#38BDF8"); // light blue
+        radius = isSelected ? 17000 : 12000;
+      }
+
+      const entity = new Cesium.Entity({
+        id: alert.id,
+        position: Cesium.Cartesian3.fromDegrees(alert.longitude, alert.latitude),
+        ellipse: {
+          semiMinorAxis: radius,
+          semiMajorAxis: radius,
+          material: color.withAlpha(isSelected ? 0.3 : 0.1),
+          outline: true,
+          outlineColor: isSelected ? Cesium.Color.WHITE : color,
+          outlineWidth: isSelected ? 4 : 2,
+          height: 20, // above station pulses
+        },
+        properties: new Cesium.PropertyBag({ alertId: alert.id }),
+      });
+
+      if (alert.severity === "high" || alert.severity === "medium") {
+        entity.label = {
+          text: `${alert.severity.toUpperCase()} • ${alert.type.toUpperCase()}`,
+          font: "12px sans-serif",
+          fillColor: color,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 2,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          pixelOffset: new Cesium.Cartesian2(0, -25),
+          heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND,
+          distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 3000000),
+        } as any;
+      }
+
+      dataSource.entities.add(entity);
+    });
+  }, [alerts, selectedAlertId]);
+
   // Handle Interactions (Hover & Click)
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -433,24 +517,25 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
       const pickedObjects = viewer.scene.drillPick(movement.position);
       
       let stationIdFound: string | null = null;
+      let alertIdFound: string | null = null;
 
       for (const pickedObject of pickedObjects) {
         if (Cesium.defined(pickedObject) && pickedObject.id && pickedObject.id.properties) {
-          const stationId = pickedObject.id.properties.getValue(viewer.clock.currentTime)?.stationId;
-          if (stationId) {
-            stationIdFound = stationId;
-            break;
+          const props = pickedObject.id.properties.getValue(viewer.clock.currentTime);
+          if (props?.stationId && !stationIdFound) {
+            stationIdFound = props.stationId;
+          }
+          if (props?.alertId && !alertIdFound) {
+            alertIdFound = props.alertId;
           }
         }
       }
 
-      if (stationIdFound) {
-        onSelectStation(stationIdFound);
-        return;
+      if (onSelectAlert) {
+        onSelectAlert(alertIdFound);
       }
       
-      // Clicked on empty ocean or unclickable entity (or just temperature grid)
-      onSelectStation(null);
+      onSelectStation(stationIdFound);
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
     return () => {
@@ -464,6 +549,8 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
         ref={cesiumContainerRef}
         className="absolute inset-0 h-full w-full"
       />
+
+      {alerts.length > 0 && <AlertLegend />}
 
       {/* Custom HTML Tooltip */}
       {tooltipState.visible && tooltipState.station && (

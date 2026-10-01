@@ -1,5 +1,5 @@
-import { useRef, useState, useEffect } from 'react';
-import { Waves, Settings, AlertTriangle, Info, X } from 'lucide-react';
+import { useRef, useState, useEffect, useMemo } from 'react';
+import { Waves, Settings, AlertTriangle, Info, X, ShieldAlert } from 'lucide-react';
 import OceanViewer from './components/OceanViewer';
 import type { OceanViewerRef } from './components/OceanViewer';
 import { demoStations } from './data/demoStations';
@@ -15,7 +15,14 @@ import { getTimedStations } from './data/demoStationSnapshots';
 import { DEMO_TIME_STEPS, formatDemoTime } from './data/demoTime';
 import type { TimeIndex } from './types/ocean';
 import { TimelineControl } from './components/TimelineControl';
-import { useMemo } from 'react';
+import InspectorTabs, { type InspectorTab } from './components/InspectorTabs';
+import ModelComparisonPanel from './components/ModelComparisonPanel';
+import { getStationModelComparison } from './data/demoModelProfiles';
+import { AlertCenter } from './components/AlertCenter';
+import { AlertDetailPanel } from './components/AlertDetailPanel';
+import { DemoScenarioPanel } from './components/DemoScenarioPanel';
+import { generateAlertsForTime, filterAlerts } from './utils/alertEngine';
+import type { AlertFilters, OceanAlert, DemoScenario } from './types/alerts';
 
 function App() {
   const viewerRef = useRef<OceanViewerRef>(null);
@@ -33,12 +40,113 @@ function App() {
   const [isTimelinePlaying, setIsTimelinePlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<0.5 | 1 | 2>(1);
 
+  const [activeInspectorTab, setActiveInspectorTab] = useState<InspectorTab>("overview");
+
+  const [alertFilters, setAlertFilters] = useState<AlertFilters>({
+    severities: [],
+    types: []
+  });
+  const [selectedAlertId, setSelectedAlertId] = useState<string | null>(null);
+  const [isScenarioOpen, setIsScenarioOpen] = useState(false);
+  const [focusAlertFn, setFocusAlertFn] = useState<((alert: OceanAlert) => void) | null>(null);
+
   const activeTimeIso = useMemo(() => DEMO_TIME_STEPS[activeTimeIndex], [activeTimeIndex]);
   const timedStations = useMemo(() => getTimedStations(demoStations, activeTimeIndex), [activeTimeIndex]);
   const selectedTimedStation = useMemo(() => {
     if (!selectedStationId) return null;
     return timedStations.find(s => s.id === selectedStationId) || null;
   }, [selectedStationId, timedStations]);
+
+  const selectedComparison = useMemo(() => {
+    if (!selectedStationId) return null;
+    const baseStation = demoStations.find(s => s.id === selectedStationId);
+    if (!baseStation) return null;
+    return getStationModelComparison(baseStation, activeTimeIndex);
+  }, [selectedStationId, activeTimeIndex]);
+
+  const allAlerts = useMemo(() => generateAlertsForTime(activeTimeIndex), [activeTimeIndex]);
+  const filteredAlerts = useMemo(() => filterAlerts(allAlerts, alertFilters), [allAlerts, alertFilters]);
+  
+  const selectedAlert = useMemo(() => allAlerts.find(a => a.id === selectedAlertId) ?? null, [allAlerts, selectedAlertId]);
+
+  useEffect(() => {
+    if (selectedAlertId && !selectedAlert) {
+      setSelectedAlertId(null);
+    }
+  }, [selectedAlert, selectedAlertId]);
+
+  const handleSelectAlert = (alert: OceanAlert) => {
+    setSelectedAlertId(alert.id);
+    if (alert.stationId) {
+      const station = demoStations.find(s => s.id === alert.stationId);
+      if (station) {
+        const isHidden = (station.type === "argo" && !showArgo) ||
+                         (station.type === "buoy" && !showBuoys) ||
+                         (station.type === "glider" && !showGliders);
+        if (!isHidden) {
+          setSelectedStationId(alert.stationId);
+        }
+      }
+    }
+  };
+
+  const handleMapSelectAlert = (alertId: string | null) => {
+    if (!alertId) {
+      setSelectedAlertId(null);
+      return;
+    }
+    const alert = allAlerts.find(a => a.id === alertId);
+    if (alert) {
+      handleSelectAlert(alert);
+    }
+  };
+
+  const demoScenario = useMemo((): DemoScenario | null => {
+    const t0Alerts = generateAlertsForTime(0);
+    const target = t0Alerts.find(a => a.severity === "high" && a.type === "wave" && a.stationId?.startsWith("buoy")) 
+      || t0Alerts.find(a => a.severity === "high") 
+      || t0Alerts[0];
+      
+    if (!target) return null;
+    return {
+      id: "marine-safety-bay-of-bengal",
+      title: "Bay of Bengal Marine Safety Review",
+      description: "This simulated Bay of Bengal review highlights a station with elevated demo wave/current conditions and/or model-observation mismatch. The view combines vector-field context, observation readings, and transparent threshold logic for demonstration.",
+      targetAlertId: target.id,
+      timeIndex: 0,
+      cameraLongitude: target.longitude,
+      cameraLatitude: target.latitude,
+      cameraHeight: 400000,
+      recommendedDemoAction: target.recommendedAction,
+      isDemo: true
+    };
+  }, []);
+
+  const launchScenario = () => {
+    if (!demoScenario) return;
+    setIsTimelinePlaying(false);
+    setActiveTimeIndex(demoScenario.timeIndex);
+    setActiveVariable("currents");
+    setSelectedDepth(0);
+    setModelLayerOpacity(0.75);
+    setShowBuoys(true);
+    setSelectedAlertId(demoScenario.targetAlertId);
+    const t0Alerts = generateAlertsForTime(demoScenario.timeIndex);
+    const target = t0Alerts.find(a => a.id === demoScenario.targetAlertId);
+    if (target && target.stationId) {
+      setSelectedStationId(target.stationId);
+    }
+    setIsScenarioOpen(true);
+    setTimeout(() => {
+      if (target && focusAlertFn) {
+        focusAlertFn(target);
+      }
+    }, 100);
+  };
+
+  useEffect(() => {
+    setActiveInspectorTab("overview");
+  }, [selectedStationId]);
 
   useEffect(() => {
     (window as any).selectStation = (id: string) => {
@@ -107,6 +215,14 @@ function App() {
         </div>
 
         <div className="flex items-center gap-4">
+          <button
+            onClick={launchScenario}
+            disabled={!demoScenario}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold bg-blue-600 hover:bg-blue-500 rounded border border-blue-400 transition-colors disabled:opacity-50 text-white"
+          >
+            <ShieldAlert size={16} />
+            Demo Scenario
+          </button>
           <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-ocean-dark/50 rounded-full border border-ocean-accent/30">
             <span className="w-2 h-2 rounded-full bg-ocean-accent animate-pulse"></span>
             <span className="text-xs font-medium text-ocean-accent">
@@ -257,6 +373,15 @@ function App() {
               </label>
 
             </div>
+            
+            <AlertCenter 
+              alerts={filteredAlerts}
+              filters={alertFilters}
+              selectedAlertId={selectedAlertId}
+              onFiltersChange={setAlertFilters}
+              onSelectAlert={handleSelectAlert}
+              onClearSelection={() => setSelectedAlertId(null)}
+            />
           </div>
         </aside>
 
@@ -276,6 +401,10 @@ function App() {
             modelLayerOpacity={modelLayerOpacity}
             activeTimeIndex={activeTimeIndex}
             activeTimeIso={activeTimeIso}
+            alerts={filteredAlerts}
+            selectedAlertId={selectedAlertId}
+            onSelectAlert={handleMapSelectAlert}
+            onFocusAlertReady={(focus) => setFocusAlertFn(() => focus)}
           />
 
           <TemperatureLegend 
@@ -339,6 +468,14 @@ function App() {
             </div>
             <div className="mt-0.5 text-[10px] text-slate-400 font-semibold bg-ocean-dark/50 px-1 rounded shadow">Demo time series</div>
           </div>
+
+          <DemoScenarioPanel 
+            isOpen={isScenarioOpen}
+            scenario={demoScenario}
+            activeTimeIndex={activeTimeIndex}
+            onLaunch={() => {}}
+            onClose={() => setIsScenarioOpen(false)}
+          />
         </main>
 
         {/* 5. Right Information Panel */}
@@ -349,6 +486,23 @@ function App() {
               Station Inspector
             </h2>
           </div>
+
+          {selectedAlert && (
+            <div className="px-4 pt-4 border-b border-cyan-900/50 bg-[#030b14]">
+              <AlertDetailPanel 
+                alert={selectedAlert}
+                onFocusAlert={() => focusAlertFn && focusAlertFn(selectedAlert)}
+                onClear={() => setSelectedAlertId(null)}
+              />
+            </div>
+          )}
+
+          <InspectorTabs 
+            activeTab={activeInspectorTab}
+            onTabChange={setActiveInspectorTab}
+            comparisonLevel={selectedComparison?.agreementLevel}
+            disabled={!selectedTimedStation}
+          />
 
           {!selectedTimedStation ? (
             <div className="flex-1 p-6 flex flex-col items-center justify-center text-center">
@@ -362,8 +516,16 @@ function App() {
                 </p>
               </div>
             </div>
+          ) : activeInspectorTab === 'comparison' && selectedComparison ? (
+            <div className="flex-1 p-5 overflow-y-auto">
+              <ModelComparisonPanel 
+                station={selectedTimedStation}
+                comparison={selectedComparison}
+                selectedDepth={selectedDepth}
+              />
+            </div>
           ) : (
-            <div className="flex-1 p-5 flex flex-col gap-4">
+            <div className="flex-1 p-5 flex flex-col gap-4 overflow-y-auto">
               <div className="flex justify-between items-start">
                 <div>
                   <h3 className="text-lg font-bold text-white">{selectedTimedStation.name}</h3>
