@@ -65,21 +65,32 @@ function App() {
   const layerCache = useRef<Map<string, ApiLayerResponse>>(new Map());
   const stationCache = useRef<Map<string, ApiObservationStation[]>>(new Map());
 
-  // 1. Fetch sources on mount
+  // 1. Fetch sources logic
+  const fetchSources = async () => {
+    try {
+      const statuses = await oceanApi.getSources();
+      setSourceStatuses(statuses);
+    } catch (e) {
+      console.warn("Backend API unavailable, Local Demo only.", e);
+      setSourceStatuses([
+        { id: "local_demo", label: "Local Demo", available: true, isDemo: true, description: "Offline-safe Local Demo available." } as SourceStatus,
+        { id: "backend_demo", label: "Backend Demo API", available: false, isDemo: true, description: "Backend Demo API is currently unreachable." } as SourceStatus,
+        { id: "archived_dataset", label: "Archived Dataset", available: false, isDemo: false, description: "Backend is unreachable." } as SourceStatus
+      ]);
+    }
+  };
+
   useEffect(() => {
-    const fetchSources = async () => {
-      try {
-        const statuses = await oceanApi.getSources();
-        setSourceStatuses(statuses);
-      } catch (e) {
-        console.warn("Backend API unavailable, Local Demo only.", e);
-        setSourceStatuses([{
-          id: "local_demo", label: "Local deterministic prototype data", available: true, isDemo: true, description: "Local frontend-only deterministic dataset."
-        } as SourceStatus]);
-      }
-    };
     fetchSources();
   }, []);
+
+  const handleSelectSource = (sourceId: DataSourceId) => {
+    if (sourceId === 'local_demo') {
+      setSourceError(null);
+    }
+    fetchSources();
+    setSelectedDataSource(sourceId);
+  };
 
   // 2. Fetch logic for metadata
   useEffect(() => {
@@ -143,7 +154,19 @@ function App() {
 
       } catch (err: unknown) {
         if (err instanceof Error && err.name === 'AbortError') return;
-        setSourceError(err instanceof Error ? err.message : "Failed to fetch from backend");
+
+        let msg = err instanceof Error ? err.message : "Failed to fetch from backend";
+        if (msg === "Backend API is unreachable. Is the server running?") {
+           msg = selectedDataSource === "backend_demo"
+             ? "Backend Demo API unavailable. Reverted to Local Demo data."
+             : "Archived Dataset is unavailable because the backend is unreachable.";
+        } else if (selectedDataSource === "archived_dataset" && msg.includes("Archived dataset unavailable")) {
+           msg = "Archived Dataset is unavailable. Run the local preprocessing workflow first.";
+        } else {
+           msg = `Unable to load this layer from the selected source. Local Demo remains available.`;
+        }
+
+        setSourceError(msg);
         setSelectedDataSource("local_demo");
       } finally {
         setIsSourceLoading(false);
@@ -385,7 +408,7 @@ function App() {
             sources={sourceStatuses}
             selectedSource={selectedDataSource}
             isLoading={isSourceLoading}
-            onSelectSource={setSelectedDataSource}
+            onSelectSource={handleSelectSource}
           />
 
           <div className="border-t border-cyan-900/50 -mx-4"></div>

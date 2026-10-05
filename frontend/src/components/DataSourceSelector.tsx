@@ -27,7 +27,8 @@ export const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
               ${selectedSource === source.id
                 ? 'bg-blue-900/40 border-blue-500/50 shadow-inner'
                 : 'bg-gray-800/50 border-gray-700 hover:bg-gray-700/50'}
-              ${(!source.available || isLoading) && selectedSource !== source.id ? 'opacity-50 cursor-not-allowed' : ''}
+              ${isLoading ? 'opacity-50 cursor-wait' : ''}
+              ${!source.available && !isLoading && selectedSource !== source.id ? 'opacity-70' : ''}
             `}
           >
             <input
@@ -35,8 +36,8 @@ export const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
               name="dataSource"
               value={source.id}
               checked={selectedSource === source.id}
-              onChange={() => !isLoading && source.available && onSelectSource(source.id)}
-              disabled={isLoading || !source.available}
+              onChange={() => !isLoading && onSelectSource(source.id)}
+              disabled={isLoading}
               className="mt-1 text-blue-500 bg-gray-900 border-gray-600 focus:ring-blue-500"
             />
             <div className="flex-1">
@@ -61,7 +62,7 @@ export const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
       </div>
 
       {isLoading && (
-        <div className="mt-3 text-xs text-blue-300 flex items-center justify-center gap-2 animate-pulse">
+        <div aria-live="polite" className="mt-3 text-xs text-blue-300 flex items-center justify-center gap-2 animate-pulse">
           <div className="w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
           Switching data source...
         </div>
