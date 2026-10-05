@@ -1,6 +1,20 @@
-node_modules/
+﻿# Python virtual environments and cache
+backend/.venv/
 __pycache__/
-.env
-dist/
-build/
-.DS_Store
+*.py[cod]
+
+# Secrets and local configuration
+backend/.env
+frontend/.env.local
+
+# Local Copernicus downloads and derived datasets
+backend/data/
+*.nc
+*.zarr/
+
+# Frontend build output
+frontend/dist/
+
+# Node.js dependencies
+frontend/node_modules/
+node_modules/

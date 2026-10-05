@@ -3,7 +3,7 @@ import { Waves, Settings, AlertTriangle, Info, X, ShieldAlert } from 'lucide-rea
 import OceanViewer from './components/OceanViewer';
 import type { OceanViewerRef } from './components/OceanViewer';
 import { demoStations } from './data/demoStations';
-import type { DepthLevel, OceanVariable } from './types/ocean';
+import type { DepthLevel, OceanVariable, ObservationStation } from './types/ocean';
 import TemperatureLegend from './components/TemperatureLegend';
 import SalinityLegend from './components/SalinityLegend';
 import CurrentLegend from './components/CurrentLegend';
@@ -23,6 +23,10 @@ import { AlertDetailPanel } from './components/AlertDetailPanel';
 import { DemoScenarioPanel } from './components/DemoScenarioPanel';
 import { generateAlertsForTime, filterAlerts } from './utils/alertEngine';
 import type { AlertFilters, OceanAlert, DemoScenario } from './types/alerts';
+import { DataSourceSelector } from './components/DataSourceSelector';
+import { SourceStatusBadge } from './components/SourceStatusBadge';
+import { oceanApi } from './services/oceanApi';
+import type { DataSourceId, SourceStatus, SourceMetadata, ApiLayerResponse, ApiObservationStation } from './types/api';
 
 function App() {
   const viewerRef = useRef<OceanViewerRef>(null);
@@ -50,23 +54,149 @@ function App() {
   const [isScenarioOpen, setIsScenarioOpen] = useState(false);
   const [focusAlertFn, setFocusAlertFn] = useState<((alert: OceanAlert) => void) | null>(null);
 
+  const [selectedDataSource, setSelectedDataSource] = useState<DataSourceId>("local_demo");
+  const [sourceStatuses, setSourceStatuses] = useState<SourceStatus[]>([]);
+  const [, setSourceMetadata] = useState<SourceMetadata | null>(null);
+  const [isSourceLoading, setIsSourceLoading] = useState(false);
+  const [sourceError, setSourceError] = useState<string | null>(null);
+  const [layerOverride, setLayerOverride] = useState<ApiLayerResponse | null>(null);
+  const [stationsOverride, setStationsOverride] = useState<ApiObservationStation[] | null>(null);
+
+  const layerCache = useRef<Map<string, ApiLayerResponse>>(new Map());
+  const stationCache = useRef<Map<string, ApiObservationStation[]>>(new Map());
+
+  // 1. Fetch sources on mount
+  useEffect(() => {
+    const fetchSources = async () => {
+      try {
+        const statuses = await oceanApi.getSources();
+        setSourceStatuses(statuses);
+      } catch (e) {
+        console.warn("Backend API unavailable, Local Demo only.", e);
+        setSourceStatuses([{
+          id: "local_demo", label: "Local deterministic prototype data", available: true, isDemo: true, description: "Local frontend-only deterministic dataset."
+        } as SourceStatus]);
+      }
+    };
+    fetchSources();
+  }, []);
+
+  // 2. Fetch logic for metadata
+  useEffect(() => {
+    if (selectedDataSource === "local_demo") {
+      return;
+    }
+    const abortController = new AbortController();
+    const fetchMetadata = async () => {
+      try {
+        const metadata = await oceanApi.getMetadata(selectedDataSource, abortController.signal);
+        setSourceMetadata(metadata);
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === 'AbortError') return;
+      }
+    };
+    fetchMetadata();
+    return () => abortController.abort();
+  }, [selectedDataSource]);
+
+  // 3. Fetch logic for layer & stations
+  useEffect(() => {
+    if (selectedDataSource === "local_demo") {
+      setLayerOverride(null);
+      setStationsOverride(null);
+      setIsSourceLoading(false);
+      // Note: We do not clear sourceError here, so that if a backend failure triggered
+      // a fallback to local_demo, the error message remains visible to the user.
+      return;
+    }
+
+    const abortController = new AbortController();
+
+    const fetchData = async () => {
+      setIsSourceLoading(true);
+      setSourceError(null);
+      try {
+        const sKey = `${selectedDataSource}:${activeTimeIndex}`;
+        let st = stationCache.current.get(sKey);
+        if (!st) {
+          st = await oceanApi.getStations({ source: selectedDataSource, timeIndex: activeTimeIndex }, abortController.signal);
+          stationCache.current.set(sKey, st);
+        }
+        setStationsOverride(st);
+
+        if (activeVariable) {
+           const lKey = `${selectedDataSource}:${activeVariable}:${selectedDepth}:${activeTimeIndex}`;
+           let lyr = layerCache.current.get(lKey);
+           if (!lyr) {
+             lyr = await oceanApi.getLayer({
+               source: selectedDataSource,
+               variable: activeVariable,
+               depthM: selectedDepth,
+               timeIndex: activeTimeIndex
+             }, abortController.signal);
+             layerCache.current.set(lKey, lyr);
+           }
+           setLayerOverride(lyr);
+        } else {
+           setLayerOverride(null);
+        }
+
+      } catch (err: unknown) {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        setSourceError(err instanceof Error ? err.message : "Failed to fetch from backend");
+        setSelectedDataSource("local_demo");
+      } finally {
+        setIsSourceLoading(false);
+      }
+    };
+
+    fetchData();
+
+    return () => abortController.abort();
+  }, [selectedDataSource, activeVariable, selectedDepth, activeTimeIndex]);
+
+  useEffect(() => {
+    setSelectedStationId(null);
+    setSelectedAlertId(null);
+  }, [selectedDataSource]);
   const activeTimeIso = useMemo(() => DEMO_TIME_STEPS[activeTimeIndex], [activeTimeIndex]);
-  const timedStations = useMemo(() => getTimedStations(demoStations, activeTimeIndex), [activeTimeIndex]);
+  const timedStations = useMemo(() => {
+    if (stationsOverride) {
+      return stationsOverride.map((st) => ({
+        ...st,
+        route: st.route ?? undefined
+      })) as ObservationStation[];
+    }
+    return getTimedStations(demoStations, activeTimeIndex);
+  }, [activeTimeIndex, stationsOverride]);
+
   const selectedTimedStation = useMemo(() => {
     if (!selectedStationId) return null;
-    return timedStations.find(s => s.id === selectedStationId) || null;
+    return timedStations.find((s) => s.id === selectedStationId) || null;
   }, [selectedStationId, timedStations]);
 
   const selectedComparison = useMemo(() => {
     if (!selectedStationId) return null;
-    const baseStation = demoStations.find(s => s.id === selectedStationId);
+
+    let baseStation: ObservationStation | undefined;
+    if (stationsOverride) {
+      const apiStation = stationsOverride.find((s) => s.id === selectedStationId);
+      if (apiStation) {
+        baseStation = { ...apiStation, route: apiStation.route ?? undefined } as ObservationStation;
+      }
+    }
+
+    if (!baseStation) {
+      baseStation = demoStations.find(s => s.id === selectedStationId);
+    }
+
     if (!baseStation) return null;
     return getStationModelComparison(baseStation, activeTimeIndex);
-  }, [selectedStationId, activeTimeIndex]);
+  }, [selectedStationId, activeTimeIndex, stationsOverride]);
 
   const allAlerts = useMemo(() => generateAlertsForTime(activeTimeIndex), [activeTimeIndex]);
   const filteredAlerts = useMemo(() => filterAlerts(allAlerts, alertFilters), [allAlerts, alertFilters]);
-  
+
   const selectedAlert = useMemo(() => allAlerts.find(a => a.id === selectedAlertId) ?? null, [allAlerts, selectedAlertId]);
 
   useEffect(() => {
@@ -103,10 +233,10 @@ function App() {
 
   const demoScenario = useMemo((): DemoScenario | null => {
     const t0Alerts = generateAlertsForTime(0);
-    const target = t0Alerts.find(a => a.severity === "high" && a.type === "wave" && a.stationId?.startsWith("buoy")) 
-      || t0Alerts.find(a => a.severity === "high") 
+    const target = t0Alerts.find(a => a.severity === "high" && a.type === "wave" && a.stationId?.startsWith("buoy"))
+      || t0Alerts.find(a => a.severity === "high")
       || t0Alerts[0];
-      
+
     if (!target) return null;
     return {
       id: "marine-safety-bay-of-bengal",
@@ -198,8 +328,9 @@ function App() {
   const buoyCount = demoStations.filter(s => s.type === 'buoy').length;
   const gliderCount = demoStations.filter(s => s.type === 'glider').length;
 
-  const tempLayer = getTemperatureLayer(selectedDepth, activeTimeIndex);
-
+  const currentTempLayer = (layerOverride && layerOverride.variable === "temperature") ? layerOverride : getTemperatureLayer(selectedDepth, activeTimeIndex);
+  const currentSalLayer = (layerOverride && layerOverride.variable === "salinity") ? layerOverride : getSalinityLayer(selectedDepth, activeTimeIndex);
+  const currentCurLayer = (layerOverride && layerOverride.variable === "currents") ? layerOverride : getCurrentLayer(selectedDepth, activeTimeIndex);
   return (
     <div className="flex flex-col h-screen w-full bg-ocean-dark text-slate-200 font-sans">
       {/* 1. Top Header */}
@@ -226,9 +357,9 @@ function App() {
           <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-ocean-dark/50 rounded-full border border-ocean-accent/30">
             <span className="w-2 h-2 rounded-full bg-ocean-accent animate-pulse"></span>
             <span className="text-xs font-medium text-ocean-accent">
-              {!activeVariable 
-                ? "Demo Dataset • Bay of Bengal" 
-                : activeVariable === "temperature" 
+              {!activeVariable
+                ? "Demo Dataset • Bay of Bengal"
+                : activeVariable === "temperature"
                 ? `Bay of Bengal • Temperature at ${selectedDepth} m`
                 : activeVariable === "salinity"
                 ? `Bay of Bengal • Salinity at ${selectedDepth} m`
@@ -248,9 +379,19 @@ function App() {
       <div className="flex flex-1 overflow-hidden">
 
         {/* 2. Left Control Panel */}
-        <aside className="w-64 bg-ocean-panel border-r border-cyan-900/50 flex flex-col shrink-0 overflow-y-auto">
-          <div className="p-4 border-b border-cyan-900/50">
-            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+        <aside className="w-64 bg-ocean-panel border-r border-cyan-900/50 flex flex-col shrink-0 overflow-y-auto p-4 gap-4">
+
+          <DataSourceSelector
+            sources={sourceStatuses}
+            selectedSource={selectedDataSource}
+            isLoading={isSourceLoading}
+            onSelectSource={setSelectedDataSource}
+          />
+
+          <div className="border-t border-cyan-900/50 -mx-4"></div>
+
+          <div>
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-4">
               <Settings size={16} className="text-ocean-accent" />
               Layer Controls
             </h2>
@@ -260,7 +401,7 @@ function App() {
             <div className="space-y-3">
               <h3 className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Ocean Fields</h3>
               <p className="text-[10px] text-slate-500 mb-3">Display one demo numerical-model field at a time.</p>
-              
+
               <div className="flex flex-col gap-2">
                 {[
                   { id: 'temperature', label: 'Temperature', unit: '°C', color: 'bg-red-500' },
@@ -274,8 +415,8 @@ function App() {
                       onClick={() => setActiveVariable(isActive ? null : v.id as OceanVariable)}
                       aria-pressed={isActive}
                       className={`flex items-center justify-between p-2 rounded border text-left transition-colors ${
-                        isActive 
-                          ? 'bg-ocean-accent/10 border-ocean-accent text-white' 
+                        isActive
+                          ? 'bg-ocean-accent/10 border-ocean-accent text-white'
                           : 'bg-ocean-dark/50 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
                       }`}
                     >
@@ -299,8 +440,8 @@ function App() {
                       onClick={() => setSelectedDepth(depth)}
                       aria-pressed={selectedDepth === depth}
                       className={`py-1 text-xs rounded transition-colors ${
-                        selectedDepth === depth 
-                          ? 'bg-ocean-accent text-ocean-dark font-bold' 
+                        selectedDepth === depth
+                          ? 'bg-ocean-accent text-ocean-dark font-bold'
                           : 'text-slate-400 hover:text-white hover:bg-slate-800'
                       }`}
                     >
@@ -335,46 +476,46 @@ function App() {
 
             <div className="space-y-3">
               <h3 className="text-xs font-medium text-slate-400 uppercase tracking-wider">Observations</h3>
-              
+
               <label className="flex items-center gap-3 text-sm cursor-pointer group">
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   checked={showArgo}
                   onChange={(e) => setShowArgo(e.target.checked)}
                   aria-label="Toggle ARGO Floats"
-                  className="w-4 h-4 rounded border-slate-600 bg-ocean-dark text-ocean-accent focus:ring-ocean-accent focus:ring-offset-ocean-dark" 
+                  className="w-4 h-4 rounded border-slate-600 bg-ocean-dark text-ocean-accent focus:ring-ocean-accent focus:ring-offset-ocean-dark"
                 />
                 <span className="w-3 h-3 rounded-full bg-cyan-400 border border-cyan-200"></span>
                 <span className="group-hover:text-white transition-colors">ARGO Floats ({argoCount})</span>
               </label>
 
               <label className="flex items-center gap-3 text-sm cursor-pointer group">
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   checked={showBuoys}
                   onChange={(e) => setShowBuoys(e.target.checked)}
                   aria-label="Toggle Mooring Buoys"
-                  className="w-4 h-4 rounded border-slate-600 bg-ocean-dark text-ocean-accent focus:ring-ocean-accent focus:ring-offset-ocean-dark" 
+                  className="w-4 h-4 rounded border-slate-600 bg-ocean-dark text-ocean-accent focus:ring-ocean-accent focus:ring-offset-ocean-dark"
                 />
                 <span className="w-3 h-3 rounded-full bg-yellow-400 border border-yellow-200"></span>
                 <span className="group-hover:text-white transition-colors">Mooring Buoys ({buoyCount})</span>
               </label>
 
               <label className="flex items-center gap-3 text-sm cursor-pointer group">
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   checked={showGliders}
                   onChange={(e) => setShowGliders(e.target.checked)}
                   aria-label="Toggle Gliders"
-                  className="w-4 h-4 rounded border-slate-600 bg-ocean-dark text-ocean-accent focus:ring-ocean-accent focus:ring-offset-ocean-dark" 
+                  className="w-4 h-4 rounded border-slate-600 bg-ocean-dark text-ocean-accent focus:ring-ocean-accent focus:ring-offset-ocean-dark"
                 />
                 <span className="w-3 h-3 rounded-full bg-purple-400 border border-purple-200"></span>
                 <span className="group-hover:text-white transition-colors">Gliders ({gliderCount})</span>
               </label>
 
             </div>
-            
-            <AlertCenter 
+
+            <AlertCenter
               alerts={filteredAlerts}
               filters={alertFilters}
               selectedAlertId={selectedAlertId}
@@ -388,8 +529,8 @@ function App() {
         {/* 3. Main 3D Viewer Area */}
         <main className="flex-1 relative bg-[#030b14] flex flex-col items-center justify-center">
           <button id="hack-select" onClick={() => (window as any).selectStation('buoy-1')} className="w-1 h-1 opacity-0 absolute z-50 left-0 top-0"></button>
-          <OceanViewer 
-            ref={viewerRef} 
+          <OceanViewer
+            ref={viewerRef}
             showArgo={showArgo}
             showBuoys={showBuoys}
             showGliders={showGliders}
@@ -405,31 +546,32 @@ function App() {
             selectedAlertId={selectedAlertId}
             onSelectAlert={handleMapSelectAlert}
             onFocusAlertReady={(focus) => setFocusAlertFn(() => focus)}
+            layerOverride={layerOverride}
           />
 
-          <TemperatureLegend 
+          <TemperatureLegend
             showTemperature={activeVariable === "temperature"}
             selectedDepth={selectedDepth}
-            minValue={tempLayer.minValue}
-            maxValue={tempLayer.maxValue}
+            minValue={currentTempLayer.minValue}
+            maxValue={currentTempLayer.maxValue}
             timeIso={activeTimeIso}
             timeIndex={activeTimeIndex}
           />
-          
-          <SalinityLegend 
+
+          <SalinityLegend
             activeVariable={activeVariable}
             selectedDepth={selectedDepth}
-            minValue={activeVariable === "salinity" ? getSalinityLayer(selectedDepth, activeTimeIndex).minValue : 0}
-            maxValue={activeVariable === "salinity" ? getSalinityLayer(selectedDepth, activeTimeIndex).maxValue : 0}
+            minValue={currentSalLayer.minValue}
+            maxValue={currentSalLayer.maxValue}
             timeIso={activeTimeIso}
             timeIndex={activeTimeIndex}
           />
-          
-          <CurrentLegend 
+
+          <CurrentLegend
             activeVariable={activeVariable}
             selectedDepth={selectedDepth}
-            minValue={activeVariable === "currents" ? getCurrentLayer(selectedDepth, activeTimeIndex).minValue : 0}
-            maxValue={activeVariable === "currents" ? getCurrentLayer(selectedDepth, activeTimeIndex).maxValue : 0}
+            minValue={currentCurLayer.minValue}
+            maxValue={currentCurLayer.maxValue}
             timeIso={activeTimeIso}
             timeIndex={activeTimeIndex}
           />
@@ -455,8 +597,8 @@ function App() {
           <div className="pointer-events-none absolute top-4 right-4 z-10 flex flex-col items-end gap-1 text-right">
             <h2 className="text-2xl font-bold text-white drop-shadow-md">3D Ocean Viewer</h2>
             <div className="text-sm text-slate-300 drop-shadow">
-              {!activeVariable 
-                ? "Bay of Bengal • Demo Mode" 
+              {!activeVariable
+                ? "Bay of Bengal • Demo Mode"
                 : activeVariable === "temperature"
                 ? `Bay of Bengal • Temperature at ${selectedDepth} m`
                 : activeVariable === "salinity"
@@ -466,10 +608,17 @@ function App() {
             <div className="mt-1 rounded bg-ocean-dark/80 px-2 py-1 text-xs font-mono text-ocean-accent border border-ocean-accent/30 backdrop-blur-sm shadow">
               {formatDemoTime(activeTimeIso)}
             </div>
-            <div className="mt-0.5 text-[10px] text-slate-400 font-semibold bg-ocean-dark/50 px-1 rounded shadow">Demo time series</div>
+
+            <div className="mt-2">
+              <SourceStatusBadge
+                selectedSourceId={selectedDataSource}
+                sources={sourceStatuses}
+                error={sourceError}
+              />
+            </div>
           </div>
 
-          <DemoScenarioPanel 
+          <DemoScenarioPanel
             isOpen={isScenarioOpen}
             scenario={demoScenario}
             activeTimeIndex={activeTimeIndex}
@@ -489,7 +638,7 @@ function App() {
 
           {selectedAlert && (
             <div className="px-4 pt-4 border-b border-cyan-900/50 bg-[#030b14]">
-              <AlertDetailPanel 
+              <AlertDetailPanel
                 alert={selectedAlert}
                 onFocusAlert={() => focusAlertFn && focusAlertFn(selectedAlert)}
                 onClear={() => setSelectedAlertId(null)}
@@ -497,7 +646,7 @@ function App() {
             </div>
           )}
 
-          <InspectorTabs 
+          <InspectorTabs
             activeTab={activeInspectorTab}
             onTabChange={setActiveInspectorTab}
             comparisonLevel={selectedComparison?.agreementLevel}
@@ -518,7 +667,7 @@ function App() {
             </div>
           ) : activeInspectorTab === 'comparison' && selectedComparison ? (
             <div className="flex-1 p-5 overflow-y-auto">
-              <ModelComparisonPanel 
+              <ModelComparisonPanel
                 station={selectedTimedStation}
                 comparison={selectedComparison}
                 selectedDepth={selectedDepth}
@@ -531,7 +680,7 @@ function App() {
                   <h3 className="text-lg font-bold text-white">{selectedTimedStation.name}</h3>
                   <p className="text-xs text-slate-400 font-mono">ID: {selectedTimedStation.id}</p>
                 </div>
-                <button 
+                <button
                   onClick={() => setSelectedStationId(null)}
                   className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
                   aria-label="Clear selection"
@@ -542,14 +691,14 @@ function App() {
 
               <div className="flex gap-2 items-center flex-wrap">
                 <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${
-                  selectedTimedStation.type === 'argo' ? 'bg-cyan-900/40 text-cyan-300 border-cyan-700/50' : 
+                  selectedTimedStation.type === 'argo' ? 'bg-cyan-900/40 text-cyan-300 border-cyan-700/50' :
                   selectedTimedStation.type === 'buoy' ? 'bg-yellow-900/40 text-yellow-300 border-yellow-700/50' :
                   'bg-purple-900/40 text-purple-300 border-purple-700/50'
                 }`}>
                   {selectedTimedStation.type}
                 </span>
                 <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${
-                  selectedTimedStation.qualityFlag === 'GOOD' ? 'bg-green-900/40 text-green-400 border-green-700/50' : 
+                  selectedTimedStation.qualityFlag === 'GOOD' ? 'bg-green-900/40 text-green-400 border-green-700/50' :
                   selectedTimedStation.qualityFlag === 'SUSPECT' ? 'bg-amber-900/40 text-amber-400 border-amber-700/50' :
                   'bg-slate-800/80 text-slate-400 border-slate-700'
                 }`}>
@@ -583,32 +732,32 @@ function App() {
 
               <div className="space-y-3 mt-2">
                 <h4 className="text-xs font-semibold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-1">Measurements</h4>
-                
+
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-slate-400">Depth</span>
                   <span className="text-sm font-medium text-white">{selectedTimedStation.depthM.toFixed(1)} m</span>
                 </div>
-                
+
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-slate-400">Temperature</span>
                   <span className="text-sm font-medium text-white">{selectedTimedStation.latestObservation.temperatureC.toFixed(2)} °C</span>
                 </div>
-                
+
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-slate-400">Salinity</span>
                   <span className="text-sm font-medium text-white">{selectedTimedStation.latestObservation.salinityPsu.toFixed(2)} PSU</span>
                 </div>
-                
+
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-slate-400">Current Speed</span>
                   <span className="text-sm font-medium text-white">{selectedTimedStation.latestObservation.currentSpeedMs.toFixed(2)} m/s</span>
                 </div>
               </div>
-              
-              <OceanConditionInsightPanel 
-                station={selectedTimedStation} 
-                activeVariable={activeVariable} 
-                selectedDepth={selectedDepth} 
+
+              <OceanConditionInsightPanel
+                station={selectedTimedStation}
+                activeVariable={activeVariable}
+                selectedDepth={selectedDepth}
               />
 
               <div className="mt-4 pt-4 border-t border-slate-800">
@@ -623,7 +772,7 @@ function App() {
       </div>
 
       <footer className="shrink-0 z-10 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] relative">
-        <TimelineControl 
+        <TimelineControl
           activeTimeIndex={activeTimeIndex}
           isPlaying={isTimelinePlaying}
           playbackSpeed={playbackSpeed}

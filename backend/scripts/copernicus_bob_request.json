@@ -1,0 +1,21 @@
+{
+  "dataset_id": "cmems_mod_glo_phy_my_0.083deg_P1D-m",
+  "variables": [
+    "thetao",
+    "so",
+    "uo",
+    "vo"
+  ],
+  "minimum_longitude": 84,
+  "maximum_longitude": 92,
+  "minimum_latitude": 10,
+  "maximum_latitude": 20,
+  "minimum_depth": 0,
+  "maximum_depth": 200,
+  "start_datetime": "2025-06-01T00:00:00",
+  "end_datetime": "2025-06-04T23:59:59",
+  "output_directory": "data",
+  "output_filename": "bob_glorys_20250601_20250604_raw.nc",
+  "file_format": "netcdf",
+  "netcdf_compression_level": 4
+}

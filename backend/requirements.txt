@@ -1,3 +1,9 @@
-fastapi==0.110.0
-uvicorn==0.29.0
-pydantic==2.6.4
+fastapi>=0.115.0,<1.0
+uvicorn[standard]>=0.30.0,<1.0
+pydantic>=2.10.0,<3.0
+
+numpy>=2.1.0,<3.0
+pandas>=2.2.3,<4.0
+xarray>=2024.10.0,<2027.0.0
+netCDF4>=1.7.2,<2.0
+copernicusmarine>=2.0,<3.0

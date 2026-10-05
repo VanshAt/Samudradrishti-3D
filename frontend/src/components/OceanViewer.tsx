@@ -6,13 +6,14 @@ import {
   useState,
 } from "react";
 import * as Cesium from "cesium";
-import type { ObservationStation, DepthLevel, OceanVariable } from "../types/ocean";
+import type { ObservationStation, DepthLevel, OceanVariable, TemperatureGridPoint, SalinityGridPoint, CurrentGridPoint } from "../types/ocean";
 import { getTemperatureLayer } from "../data/demoTemperature";
 import { getSalinityLayer } from "../data/demoSalinity";
 import { getCurrentLayer } from "../data/demoCurrents";
 import { getTemperatureColor, getSalinityColor, getCurrentSpeedColor } from "../utils/oceanColors";
 import type { TimeIndex } from "../types/ocean";
 import type { OceanAlert } from "../types/alerts";
+import type { ApiLayerResponse } from "../types/api";
 import { AlertLegend } from "./AlertLegend";
 
 export interface OceanViewerProps {
@@ -31,6 +32,7 @@ export interface OceanViewerProps {
   selectedAlertId: string | null;
   onSelectAlert?: (alertId: string | null) => void;
   onFocusAlertReady?: (focus: (alert: OceanAlert) => void) => void;
+  layerOverride?: ApiLayerResponse | null;
 }
 
 export interface OceanViewerRef {
@@ -63,19 +65,19 @@ function getCurrentArrowEnd(
 ): { endLongitude: number; endLatitude: number } {
   // Arrow length scaling based on speed (between 0.2 and 0.65 degrees approx)
   const lengthDegrees = Math.max(0.2, Math.min(0.65, speedMs * 0.8));
-  
+
   // Math.sin and Math.cos take radians
   // 0 degrees points North, 90 points East
   // Since standard Math angles start with 0 East and go counter-clockwise,
   // we do:
   // deltaLat (North/South) = cos(direction)
   // deltaLon (East/West) = sin(direction)
-  
+
   const directionRadians = (directionDegrees * Math.PI) / 180;
-  
+
   const deltaLatitude = lengthDegrees * Math.cos(directionRadians);
   const deltaLongitude = lengthDegrees * Math.sin(directionRadians);
-  
+
   return {
     endLongitude: longitude + deltaLongitude,
     endLatitude: latitude + deltaLatitude,
@@ -83,12 +85,12 @@ function getCurrentArrowEnd(
 }
 
 const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) => {
-  const { 
-    showArgo, 
-    showBuoys, 
+  const {
+    showArgo,
+    showBuoys,
     showGliders,
     stations,
-    selectedStationId, 
+    selectedStationId,
     onSelectStation,
     activeVariable,
     selectedDepth,
@@ -97,9 +99,10 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
     alerts,
     selectedAlertId,
     onSelectAlert,
-    onFocusAlertReady
+    onFocusAlertReady,
+    layerOverride
   } = props;
-  
+
   const cesiumContainerRef = useRef<HTMLDivElement | null>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const stationSourceRef = useRef<Cesium.CustomDataSource | null>(null);
@@ -107,7 +110,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
   const salinitySourceRef = useRef<Cesium.CustomDataSource | null>(null);
   const currentsSourceRef = useRef<Cesium.CustomDataSource | null>(null);
   const oceanAlertsDataSourceRef = useRef<Cesium.CustomDataSource | null>(null);
-  
+
   const [tooltipState, setTooltipState] = useState<{
     visible: boolean;
     x: number;
@@ -172,7 +175,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
       selectionIndicator: false,
       timeline: false,
       vrButton: false,
-      baseLayer: false, 
+      baseLayer: false,
     });
 
     viewerRef.current = viewer;
@@ -233,15 +236,18 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
     if (activeVariable !== "temperature") return;
 
-    const layerData = getTemperatureLayer(selectedDepth, activeTimeIndex);
-    const { points, minValue, maxValue } = layerData;
+    const layerData = (layerOverride && layerOverride.variable === "temperature")
+      ? layerOverride
+      : getTemperatureLayer(selectedDepth, activeTimeIndex);
+    const { minValue, maxValue } = layerData;
+    const points = layerData.points as TemperatureGridPoint[];
 
     const latHalfStep = 1.0;
     const lonHalfStep = 1.0625;
 
-    points.forEach((pt, index) => {
+    points.forEach((pt, index: number) => {
       const color = getTemperatureColor(pt.temperatureC, minValue, maxValue, modelLayerOpacity);
-      
+
       tempSource.entities.add({
         id: `temp-${index}`,
         rectangle: {
@@ -253,11 +259,11 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
           ),
           material: new Cesium.ColorMaterialProperty(color),
           outline: false,
-          height: 0, 
+          height: 0,
         }
       });
     });
-  }, [activeVariable, selectedDepth, modelLayerOpacity, activeTimeIndex]);
+  }, [activeVariable, selectedDepth, modelLayerOpacity, activeTimeIndex, layerOverride]);
 
   // Update Salinity Entities
   useEffect(() => {
@@ -268,15 +274,18 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
     if (activeVariable !== "salinity") return;
 
-    const layerData = getSalinityLayer(selectedDepth, activeTimeIndex);
-    const { points, minValue, maxValue } = layerData;
+    const layerData = (layerOverride && layerOverride.variable === "salinity")
+      ? layerOverride
+      : getSalinityLayer(selectedDepth, activeTimeIndex);
+    const { minValue, maxValue } = layerData;
+    const points = layerData.points as SalinityGridPoint[];
 
     const latHalfStep = 1.0;
     const lonHalfStep = 1.0625;
 
-    points.forEach((pt, index) => {
+    points.forEach((pt, index: number) => {
       const color = getSalinityColor(pt.salinityPsu, minValue, maxValue, modelLayerOpacity);
-      
+
       salinitySource.entities.add({
         id: `salinity-${index}`,
         rectangle: {
@@ -288,11 +297,11 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
           ),
           material: new Cesium.ColorMaterialProperty(color),
           outline: false,
-          height: 0, 
+          height: 0,
         }
       });
     });
-  }, [activeVariable, selectedDepth, modelLayerOpacity, activeTimeIndex]);
+  }, [activeVariable, selectedDepth, modelLayerOpacity, activeTimeIndex, layerOverride]);
 
   // Update Current Entities
   useEffect(() => {
@@ -303,13 +312,16 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
     if (activeVariable !== "currents") return;
 
-    const layerData = getCurrentLayer(selectedDepth, activeTimeIndex);
-    const { points, minValue, maxValue } = layerData;
+    const layerData = (layerOverride && layerOverride.variable === "currents")
+      ? layerOverride
+      : getCurrentLayer(selectedDepth, activeTimeIndex);
+    const { minValue, maxValue } = layerData;
+    const points = layerData.points as CurrentGridPoint[];
 
-    points.forEach((pt, index) => {
+    points.forEach((pt, index: number) => {
       const color = getCurrentSpeedColor(pt.speedMs, minValue, maxValue, modelLayerOpacity);
       const { endLongitude, endLatitude } = getCurrentArrowEnd(pt.longitude, pt.latitude, pt.directionDegrees, pt.speedMs);
-      
+
       currentsSource.entities.add({
         id: `current-${index}`,
         polyline: {
@@ -327,7 +339,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
         }
       });
     });
-  }, [activeVariable, selectedDepth, modelLayerOpacity, activeTimeIndex]);
+  }, [activeVariable, selectedDepth, modelLayerOpacity, activeTimeIndex, layerOverride]);
 
   // Update Station Entities when filters or selection changes
   useEffect(() => {
@@ -347,7 +359,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
     filteredStations.forEach(station => {
       const isSelected = selectedStationId === station.id;
-      
+
       let color: Cesium.Color;
       let outlineColor = isSelected ? Cesium.Color.WHITE : Cesium.Color.BLACK;
       let outlineWidth = isSelected ? 3 : 1;
@@ -479,10 +491,10 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
     // Hover (Tooltip)
     handler.setInputAction((movement: Cesium.ScreenSpaceEventHandler.MotionEvent) => {
       const pickedObjects = viewer.scene.drillPick(movement.endPosition);
-      
+
       // We use drillPick because we might pick a temperature rectangle first, we want to find if there's a station
       let stationIdFound: string | null = null;
-      
+
       for (const pickedObject of pickedObjects) {
         if (Cesium.defined(pickedObject) && pickedObject.id && pickedObject.id.properties) {
           const stationId = pickedObject.id.properties.getValue(viewer.clock.currentTime)?.stationId;
@@ -506,7 +518,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
         }
         return;
       }
-      
+
       (viewer.container as HTMLElement).style.cursor = "default";
       setTooltipState(prev => prev.visible ? { ...prev, visible: false } : prev);
 
@@ -515,7 +527,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
     // Click (Select)
     handler.setInputAction((movement: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
       const pickedObjects = viewer.scene.drillPick(movement.position);
-      
+
       let stationIdFound: string | null = null;
       let alertIdFound: string | null = null;
 
@@ -534,7 +546,7 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
       if (onSelectAlert) {
         onSelectAlert(alertIdFound);
       }
-      
+
       onSelectStation(stationIdFound);
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
@@ -554,12 +566,12 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
       {/* Custom HTML Tooltip */}
       {tooltipState.visible && tooltipState.station && (
-        <div 
+        <div
           className="pointer-events-none absolute z-50 bg-[#0B2638]/95 border border-[#00D4D8]/30 rounded p-2 text-slate-200 shadow-xl backdrop-blur-sm transform -translate-x-1/2 -translate-y-full mb-3"
-          style={{ 
-            left: tooltipState.x, 
+          style={{
+            left: tooltipState.x,
             top: tooltipState.y - 15,
-            minWidth: '150px' 
+            minWidth: '150px'
           }}
         >
           <div className="text-sm font-bold text-white border-b border-slate-700 pb-1 mb-1">
