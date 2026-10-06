@@ -49,6 +49,9 @@ export const oceanApi = {
       depth_m: params.depthM.toString(),
       time_index: params.timeIndex.toString()
     });
+    if (params.source === "archived_dataset") {
+      query.set("stride", "3");
+    }
     return fetchApi<ApiLayerResponse>(`/api/layers?${query.toString()}`, { signal });
   },
 

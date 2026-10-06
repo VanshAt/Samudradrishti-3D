@@ -339,7 +339,7 @@ def get_archived_metadata() -> SourceMetadata:
 
 
 def get_archived_layer(
-    variable: OceanVariable, depth_m: int, time_index: int
+    variable: OceanVariable, depth_m: int, time_index: int, stride: int = 1
 ) -> LayerResponse:
     _require_archived_dataset()
 
@@ -368,8 +368,15 @@ def get_archived_layer(
         if variable == OceanVariable.TEMPERATURE:
             units = "°C"
             temp_data = data['temperature'].values
-            for i, lat in enumerate(lats):
-                for j, lon in enumerate(lons):
+            valid_mask = np.isfinite(temp_data)
+            if np.any(valid_mask):
+                min_val = float(np.min(temp_data[valid_mask]))
+                max_val = float(np.max(temp_data[valid_mask]))
+
+            for i in range(0, len(lats), stride):
+                lat = lats[i]
+                for j in range(0, len(lons), stride):
+                    lon = lons[j]
                     val = float(temp_data[i, j])
                     if np.isfinite(val):
                         points.append(
@@ -380,14 +387,19 @@ def get_archived_layer(
                                 temperatureC=val,
                             )
                         )
-                        min_val = min(min_val, val)
-                        max_val = max(max_val, val)
 
         elif variable == OceanVariable.SALINITY:
             units = "PSU"
             sal_data = data['salinity'].values
-            for i, lat in enumerate(lats):
-                for j, lon in enumerate(lons):
+            valid_mask = np.isfinite(sal_data)
+            if np.any(valid_mask):
+                min_val = float(np.min(sal_data[valid_mask]))
+                max_val = float(np.max(sal_data[valid_mask]))
+
+            for i in range(0, len(lats), stride):
+                lat = lats[i]
+                for j in range(0, len(lons), stride):
+                    lon = lons[j]
                     val = float(sal_data[i, j])
                     if np.isfinite(val):
                         points.append(
@@ -398,17 +410,21 @@ def get_archived_layer(
                                 salinityPsu=val,
                             )
                         )
-                        min_val = min(min_val, val)
-                        max_val = max(max_val, val)
 
         elif variable == OceanVariable.CURRENTS:
             units = "m/s"
             u_data = data['u_current'].values
             v_data = data['v_current'].values
             speed_data = data['current_speed'].values
+            valid_mask = np.isfinite(speed_data) & np.isfinite(u_data) & np.isfinite(v_data)
+            if np.any(valid_mask):
+                min_val = float(np.min(speed_data[valid_mask]))
+                max_val = float(np.max(speed_data[valid_mask]))
 
-            for i, lat in enumerate(lats):
-                for j, lon in enumerate(lons):
+            for i in range(0, len(lats), stride):
+                lat = lats[i]
+                for j in range(0, len(lons), stride):
+                    lon = lons[j]
                     u = float(u_data[i, j])
                     v = float(v_data[i, j])
                     spd = float(speed_data[i, j])
@@ -418,8 +434,6 @@ def get_archived_layer(
                             latitude=float(lat), longitude=float(lon), depthM=depth_m,
                             uMs=u, vMs=v, speedMs=spd, directionDegrees=dir_deg
                         ))
-                        min_val = min(min_val, spd)
-                        max_val = max(max_val, spd)
 
         if len(points) == 0:
             min_val = 0.0

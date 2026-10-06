@@ -26,7 +26,7 @@ import type { AlertFilters, OceanAlert, DemoScenario } from './types/alerts';
 import { DataSourceSelector } from './components/DataSourceSelector';
 import { SourceStatusBadge } from './components/SourceStatusBadge';
 import { oceanApi } from './services/oceanApi';
-import type { DataSourceId, SourceStatus, SourceMetadata, ApiLayerResponse, ApiObservationStation } from './types/api';
+import type { DataSourceId, SourceStatus, ApiLayerResponse, ApiObservationStation } from './types/api';
 
 function App() {
   const viewerRef = useRef<OceanViewerRef>(null);
@@ -56,7 +56,6 @@ function App() {
 
   const [selectedDataSource, setSelectedDataSource] = useState<DataSourceId>("local_demo");
   const [sourceStatuses, setSourceStatuses] = useState<SourceStatus[]>([]);
-  const [, setSourceMetadata] = useState<SourceMetadata | null>(null);
   const [isSourceLoading, setIsSourceLoading] = useState(false);
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [layerOverride, setLayerOverride] = useState<ApiLayerResponse | null>(null);
@@ -91,24 +90,6 @@ function App() {
     fetchSources();
     setSelectedDataSource(sourceId);
   };
-
-  // 2. Fetch logic for metadata
-  useEffect(() => {
-    if (selectedDataSource === "local_demo") {
-      return;
-    }
-    const abortController = new AbortController();
-    const fetchMetadata = async () => {
-      try {
-        const metadata = await oceanApi.getMetadata(selectedDataSource, abortController.signal);
-        setSourceMetadata(metadata);
-      } catch (err: unknown) {
-        if (err instanceof Error && err.name === 'AbortError') return;
-      }
-    };
-    fetchMetadata();
-    return () => abortController.abort();
-  }, [selectedDataSource]);
 
   // 3. Fetch logic for layer & stations
   useEffect(() => {
@@ -154,20 +135,8 @@ function App() {
 
       } catch (err: unknown) {
         if (err instanceof Error && err.name === 'AbortError') return;
-
-        let msg = err instanceof Error ? err.message : "Failed to fetch from backend";
-        if (msg === "Backend API is unreachable. Is the server running?") {
-           msg = selectedDataSource === "backend_demo"
-             ? "Backend Demo API unavailable. Reverted to Local Demo data."
-             : "Archived Dataset is unavailable because the backend is unreachable.";
-        } else if (selectedDataSource === "archived_dataset" && msg.includes("Archived dataset unavailable")) {
-           msg = "Archived Dataset is unavailable. Run the local preprocessing workflow first.";
-        } else {
-           msg = `Unable to load this layer from the selected source. Local Demo remains available.`;
-        }
-
-        setSourceError(msg);
-        setSelectedDataSource("local_demo");
+        setSourceError(err instanceof Error ? err.message : "Failed to fetch from backend");
+        // Do NOT change selectedDataSource here; let the user manually switch or retry.
       } finally {
         setIsSourceLoading(false);
       }
