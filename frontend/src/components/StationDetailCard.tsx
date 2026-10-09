@@ -4,10 +4,20 @@ import type { ObservationStation, DepthLevel } from '../types/ocean';
 import type { OceanAlert } from '../types/alerts';
 import { formatDemoTime } from '../data/demoTime';
 
+export interface ModelComparisonResult {
+  variableLabel: string;
+  unit: string;
+  stationValue: number;
+  modelValue: number;
+  difference: number;
+  distanceKm?: number;
+}
+
 interface StationDetailCardProps {
   station: ObservationStation;
   selectedDepth: DepthLevel;
   alerts: OceanAlert[];
+  modelComparison: ModelComparisonResult | null;
   onClose: () => void;
 }
 
@@ -15,6 +25,7 @@ export const StationDetailCard: React.FC<StationDetailCardProps> = ({
   station,
   selectedDepth,
   alerts,
+  modelComparison,
   onClose,
 }) => {
   useEffect(() => {
@@ -33,10 +44,10 @@ export const StationDetailCard: React.FC<StationDetailCardProps> = ({
   const highestSeverity = stationAlerts.some((a) => a.severity === 'high')
     ? 'high'
     : stationAlerts.some((a) => a.severity === 'medium')
-    ? 'medium'
-    : stationAlerts.length > 0
-    ? 'low'
-    : null;
+      ? 'medium'
+      : stationAlerts.length > 0
+        ? 'low'
+        : null;
 
   const getPriorityColor = (severity: 'high' | 'medium' | 'low' | null) => {
     if (severity === 'high') return 'bg-red-500/20 text-red-400 border-red-500/50';
@@ -129,7 +140,55 @@ export const StationDetailCard: React.FC<StationDetailCardProps> = ({
           </div>
         </div>
 
-        <div className="pt-2 space-y-1">
+        <div className="pt-2 border-t border-slate-700/50">
+          <h4 className="text-[10px] text-slate-400 uppercase tracking-wider mb-2">Model Comparison</h4>
+          {!modelComparison ? (
+            <p className="text-[11px] text-slate-500 italic">
+              Nearest model comparison is unavailable for the selected station and layer.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-ocean-dark/50 p-2 rounded border border-slate-800">
+                  <div className="text-[10px] text-slate-500">Station</div>
+                  <div className="font-mono text-slate-200">
+                    {modelComparison.stationValue.toFixed(2)} <span className="text-[9px]">{modelComparison.unit}</span>
+                  </div>
+                </div>
+                <div className="bg-ocean-dark/50 p-2 rounded border border-slate-800">
+                  <div className="text-[10px] text-slate-500">Nearest Model</div>
+                  <div className="font-mono text-slate-200">
+                    {modelComparison.modelValue.toFixed(2)} <span className="text-[9px]">{modelComparison.unit}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-between text-xs px-1">
+                <span className="text-slate-400">Difference:</span>
+                <span className={`font-mono font-bold ${Math.abs(modelComparison.difference) < 0.01 ? 'text-slate-300' :
+                    modelComparison.difference > 0 ? 'text-red-400' : 'text-blue-400'
+                  }`}>
+                  {modelComparison.difference > 0 ? '+' : ''}
+                  {modelComparison.difference.toFixed(2)} {modelComparison.unit}
+                </span>
+              </div>
+              {modelComparison.distanceKm !== undefined && (
+                <div className="flex items-center justify-between text-[10px] px-1 text-slate-500">
+                  <span>Distance to grid:</span>
+                  <span className="font-mono">{modelComparison.distanceKm.toFixed(1)} km</span>
+                </div>
+              )}
+              <p className="text-[10px] text-slate-400 mt-1 leading-tight px-1 bg-ocean-dark/30 rounded py-1 border border-slate-800/50">
+                {Math.abs(modelComparison.difference) < 0.05
+                  ? `Station and nearest model values are closely aligned.`
+                  : modelComparison.difference > 0
+                    ? `Station observation is ${modelComparison.variableLabel === 'Salinity' ? 'saltier' : modelComparison.variableLabel === 'Temperature' ? 'warmer' : 'faster'} than the nearest model value.`
+                    : `Station observation is ${modelComparison.variableLabel === 'Salinity' ? 'fresher' : modelComparison.variableLabel === 'Temperature' ? 'cooler' : 'slower'} than the nearest model value.`}
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="pt-2 border-t border-slate-700/50 space-y-1">
           <p className="text-[10px] text-slate-500 italic leading-tight">
             Prototype/synthetic observation unless explicitly identified as a verified live source.
           </p>

@@ -27,6 +27,7 @@ import { DataSourceSelector } from './components/DataSourceSelector';
 import { SourceStatusBadge } from './components/SourceStatusBadge';
 import { AboutDataPanel } from './components/AboutDataPanel';
 import { StationDetailCard } from './components/StationDetailCard';
+import { calculateModelComparison } from './utils/comparisonUtils';
 import { oceanApi } from './services/oceanApi';
 import type { DataSourceId, SourceStatus, ApiLayerResponse, ApiObservationStation } from './types/api';
 
@@ -119,20 +120,20 @@ function App() {
         setStationsOverride(st);
 
         if (activeVariable) {
-           const lKey = `${selectedDataSource}:${activeVariable}:${selectedDepth}:${activeTimeIndex}`;
-           let lyr = layerCache.current.get(lKey);
-           if (!lyr) {
-             lyr = await oceanApi.getLayer({
-               source: selectedDataSource,
-               variable: activeVariable,
-               depthM: selectedDepth,
-               timeIndex: activeTimeIndex
-             }, abortController.signal);
-             layerCache.current.set(lKey, lyr);
-           }
-           setLayerOverride(lyr);
+          const lKey = `${selectedDataSource}:${activeVariable}:${selectedDepth}:${activeTimeIndex}`;
+          let lyr = layerCache.current.get(lKey);
+          if (!lyr) {
+            lyr = await oceanApi.getLayer({
+              source: selectedDataSource,
+              variable: activeVariable,
+              depthM: selectedDepth,
+              timeIndex: activeTimeIndex
+            }, abortController.signal);
+            layerCache.current.set(lKey, lyr);
+          }
+          setLayerOverride(lyr);
         } else {
-           setLayerOverride(null);
+          setLayerOverride(null);
         }
 
       } catch (err: unknown) {
@@ -205,8 +206,8 @@ function App() {
       const station = demoStations.find(s => s.id === alert.stationId);
       if (station) {
         const isHidden = (station.type === "argo" && !showArgo) ||
-                         (station.type === "buoy" && !showBuoys) ||
-                         (station.type === "glider" && !showGliders);
+          (station.type === "buoy" && !showBuoys) ||
+          (station.type === "glider" && !showGliders);
         if (!isHidden) {
           setSelectedStationId(alert.stationId);
         }
@@ -325,6 +326,12 @@ function App() {
   const currentTempLayer = (layerOverride && layerOverride.variable === "temperature") ? layerOverride : getTemperatureLayer(selectedDepth, activeTimeIndex);
   const currentSalLayer = (layerOverride && layerOverride.variable === "salinity") ? layerOverride : getSalinityLayer(selectedDepth, activeTimeIndex);
   const currentCurLayer = (layerOverride && layerOverride.variable === "currents") ? layerOverride : getCurrentLayer(selectedDepth, activeTimeIndex);
+  const activeLayer = activeVariable === "temperature" ? currentTempLayer
+    : activeVariable === "salinity" ? currentSalLayer
+      : activeVariable === "currents" ? currentCurLayer
+        : null;
+  const modelComparison = selectedTimedStation ? calculateModelComparison(selectedTimedStation, activeVariable, activeLayer) : null;
+
   return (
     <div className="flex flex-col h-screen w-full bg-ocean-dark text-slate-200 font-sans">
       {/* 1. Top Header */}
@@ -354,10 +361,10 @@ function App() {
               {!activeVariable
                 ? "Demo Dataset • Bay of Bengal"
                 : activeVariable === "temperature"
-                ? `Bay of Bengal • Temperature at ${selectedDepth} m`
-                : activeVariable === "salinity"
-                ? `Bay of Bengal • Salinity at ${selectedDepth} m`
-                : `Bay of Bengal • Currents at ${selectedDepth} m`}
+                  ? `Bay of Bengal • Temperature at ${selectedDepth} m`
+                  : activeVariable === "salinity"
+                    ? `Bay of Bengal • Salinity at ${selectedDepth} m`
+                    : `Bay of Bengal • Currents at ${selectedDepth} m`}
             </span>
           </div>
           <button
@@ -381,7 +388,7 @@ function App() {
             isLoading={isSourceLoading}
             onSelectSource={handleSelectSource}
           />
-          
+
           <AboutDataPanel selectedDataSource={selectedDataSource} />
 
           <div className="border-t border-cyan-900/50 -mx-4"></div>
@@ -410,11 +417,10 @@ function App() {
                       key={v.id}
                       onClick={() => setActiveVariable(isActive ? null : v.id as OceanVariable)}
                       aria-pressed={isActive}
-                      className={`flex items-center justify-between p-2 rounded border text-left transition-colors ${
-                        isActive
+                      className={`flex items-center justify-between p-2 rounded border text-left transition-colors ${isActive
                           ? 'bg-ocean-accent/10 border-ocean-accent text-white'
                           : 'bg-ocean-dark/50 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
-                      }`}
+                        }`}
                     >
                       <div className="flex items-center gap-2">
                         <span className={`w-3 h-3 rounded-full ${v.color}`}></span>
@@ -435,11 +441,10 @@ function App() {
                       key={depth}
                       onClick={() => setSelectedDepth(depth)}
                       aria-pressed={selectedDepth === depth}
-                      className={`py-1 text-xs rounded transition-colors ${
-                        selectedDepth === depth
+                      className={`py-1 text-xs rounded transition-colors ${selectedDepth === depth
                           ? 'bg-ocean-accent text-ocean-dark font-bold'
                           : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                      }`}
+                        }`}
                     >
                       {depth === 0 ? "Surface" : `${depth} m`}
                     </button>
@@ -596,6 +601,7 @@ function App() {
                 station={selectedTimedStation}
                 selectedDepth={selectedDepth}
                 alerts={allAlerts}
+                modelComparison={modelComparison}
                 onClose={() => setSelectedStationId(null)}
               />
             </div>
@@ -608,10 +614,10 @@ function App() {
               {!activeVariable
                 ? "Bay of Bengal • Demo Mode"
                 : activeVariable === "temperature"
-                ? `Bay of Bengal • Temperature at ${selectedDepth} m`
-                : activeVariable === "salinity"
-                ? `Bay of Bengal • Salinity at ${selectedDepth} m`
-                : `Bay of Bengal • Currents at ${selectedDepth} m`}
+                  ? `Bay of Bengal • Temperature at ${selectedDepth} m`
+                  : activeVariable === "salinity"
+                    ? `Bay of Bengal • Salinity at ${selectedDepth} m`
+                    : `Bay of Bengal • Currents at ${selectedDepth} m`}
             </div>
             <div className="mt-1 rounded bg-ocean-dark/80 px-2 py-1 text-xs font-mono text-ocean-accent border border-ocean-accent/30 backdrop-blur-sm shadow">
               {formatDemoTime(activeTimeIso)}
@@ -630,7 +636,7 @@ function App() {
             isOpen={isScenarioOpen}
             scenario={demoScenario}
             activeTimeIndex={activeTimeIndex}
-            onLaunch={() => {}}
+            onLaunch={() => { }}
             onClose={() => setIsScenarioOpen(false)}
           />
         </main>
@@ -698,18 +704,16 @@ function App() {
               </div>
 
               <div className="flex gap-2 items-center flex-wrap">
-                <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${
-                  selectedTimedStation.type === 'argo' ? 'bg-cyan-900/40 text-cyan-300 border-cyan-700/50' :
-                  selectedTimedStation.type === 'buoy' ? 'bg-yellow-900/40 text-yellow-300 border-yellow-700/50' :
-                  'bg-purple-900/40 text-purple-300 border-purple-700/50'
-                }`}>
+                <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${selectedTimedStation.type === 'argo' ? 'bg-cyan-900/40 text-cyan-300 border-cyan-700/50' :
+                    selectedTimedStation.type === 'buoy' ? 'bg-yellow-900/40 text-yellow-300 border-yellow-700/50' :
+                      'bg-purple-900/40 text-purple-300 border-purple-700/50'
+                  }`}>
                   {selectedTimedStation.type}
                 </span>
-                <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${
-                  selectedTimedStation.qualityFlag === 'GOOD' ? 'bg-green-900/40 text-green-400 border-green-700/50' :
-                  selectedTimedStation.qualityFlag === 'SUSPECT' ? 'bg-amber-900/40 text-amber-400 border-amber-700/50' :
-                  'bg-slate-800/80 text-slate-400 border-slate-700'
-                }`}>
+                <span className={`px-2 py-1 text-[10px] font-bold uppercase rounded border ${selectedTimedStation.qualityFlag === 'GOOD' ? 'bg-green-900/40 text-green-400 border-green-700/50' :
+                    selectedTimedStation.qualityFlag === 'SUSPECT' ? 'bg-amber-900/40 text-amber-400 border-amber-700/50' :
+                      'bg-slate-800/80 text-slate-400 border-slate-700'
+                  }`}>
                   {selectedTimedStation.qualityFlag}
                 </span>
                 <span className="px-2 py-1 text-[10px] bg-blue-900/40 text-blue-300 border border-blue-700/50 rounded ml-auto">
