@@ -25,6 +25,7 @@ import { generateAlertsForTime, filterAlerts } from './utils/alertEngine';
 import type { AlertFilters, OceanAlert, DemoScenario } from './types/alerts';
 import { DataSourceSelector } from './components/DataSourceSelector';
 import { SourceStatusBadge } from './components/SourceStatusBadge';
+import { AboutDataPanel } from './components/AboutDataPanel';
 import { oceanApi } from './services/oceanApi';
 import type { DataSourceId, SourceStatus, ApiLayerResponse, ApiObservationStation } from './types/api';
 
@@ -379,6 +380,8 @@ function App() {
             isLoading={isSourceLoading}
             onSelectSource={handleSelectSource}
           />
+          
+          <AboutDataPanel selectedDataSource={selectedDataSource} />
 
           <div className="border-t border-cyan-900/50 -mx-4"></div>
 
