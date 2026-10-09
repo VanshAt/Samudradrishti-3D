@@ -26,6 +26,7 @@ import type { AlertFilters, OceanAlert, DemoScenario } from './types/alerts';
 import { DataSourceSelector } from './components/DataSourceSelector';
 import { SourceStatusBadge } from './components/SourceStatusBadge';
 import { AboutDataPanel } from './components/AboutDataPanel';
+import { StationDetailCard } from './components/StationDetailCard';
 import { oceanApi } from './services/oceanApi';
 import type { DataSourceId, SourceStatus, ApiLayerResponse, ApiObservationStation } from './types/api';
 
@@ -587,6 +588,18 @@ function App() {
               </>
             )}
           </div>
+
+          {/* Station Detail Card Overlay */}
+          {selectedTimedStation && (
+            <div className="absolute top-24 left-4 z-20 pointer-events-none">
+              <StationDetailCard
+                station={selectedTimedStation}
+                selectedDepth={selectedDepth}
+                alerts={allAlerts}
+                onClose={() => setSelectedStationId(null)}
+              />
+            </div>
+          )}
 
           {/* Viewer Overlay */}
           <div className="pointer-events-none absolute top-4 right-4 z-10 flex flex-col items-end gap-1 text-right">
