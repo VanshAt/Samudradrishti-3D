@@ -40,9 +40,9 @@ export interface OceanViewerRef {
 }
 
 const BAY_OF_BENGAL_DESTINATION = Cesium.Cartesian3.fromDegrees(
-  89.0,
-  15.0,
-  1_600_000
+  85.0,
+  10.0,
+  5_000_000
 );
 
 const flyToBayOfBengal = (viewer: Cesium.Viewer): void => {
@@ -50,7 +50,7 @@ const flyToBayOfBengal = (viewer: Cesium.Viewer): void => {
     destination: BAY_OF_BENGAL_DESTINATION,
     orientation: {
       heading: Cesium.Math.toRadians(0),
-      pitch: Cesium.Math.toRadians(-55),
+      pitch: Cesium.Math.toRadians(-75),
       roll: 0,
     },
     duration: 1.5,
@@ -146,76 +146,92 @@ const OceanViewer = forwardRef<OceanViewerRef, OceanViewerProps>((props, ref) =>
 
   // Initial Viewer Setup
   useEffect(() => {
-    const container = cesiumContainerRef.current;
+    let viewer: Cesium.Viewer | null = null;
+    let isMounted = true;
 
-    if (!container || viewerRef.current) {
-      return;
-    }
+    const initCesium = async () => {
+      const container = cesiumContainerRef.current;
+      if (!container || viewerRef.current) return;
 
-    const token = import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined;
+      const token = import.meta.env.VITE_CESIUM_ION_TOKEN as string | undefined;
 
-    if (token?.trim()) {
-      Cesium.Ion.defaultAccessToken = token;
-    } else {
-      console.warn(
-        "Missing VITE_CESIUM_ION_TOKEN. Add it to frontend/.env and restart Vite."
-      );
-    }
+      let baseLayer: Cesium.ImageryLayer;
+      let terrainProvider: Cesium.TerrainProvider | undefined = undefined;
 
-    const viewer = new Cesium.Viewer(container, {
-      animation: false,
-      baseLayerPicker: false,
-      fullscreenButton: false,
-      geocoder: false,
-      homeButton: false,
-      infoBox: false,
-      navigationHelpButton: false,
-      navigationInstructionsInitiallyVisible: false,
-      sceneModePicker: false,
-      selectionIndicator: false,
-      timeline: false,
-      vrButton: false,
-      baseLayer: false,
-    });
+      if (token?.trim()) {
+        Cesium.Ion.defaultAccessToken = token.trim();
+        try {
+          const provider = await Cesium.createWorldImageryAsync({
+            style: Cesium.IonWorldImageryStyle.AERIAL
+          });
+          baseLayer = new Cesium.ImageryLayer(provider);
+          terrainProvider = await Cesium.createWorldTerrainAsync();
+        } catch (e) {
+          console.error("Failed to load Cesium Ion resources", e);
+          const osmProvider = new Cesium.OpenStreetMapImageryProvider({
+            url: "https://a.tile.openstreetmap.org/"
+          });
+          baseLayer = new Cesium.ImageryLayer(osmProvider);
+        }
+      } else {
+        const osmProvider = new Cesium.OpenStreetMapImageryProvider({
+          url: "https://a.tile.openstreetmap.org/"
+        });
+        baseLayer = new Cesium.ImageryLayer(osmProvider);
+      }
 
-    viewerRef.current = viewer;
-    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#0A192F");
+      if (!isMounted) return;
 
-    const darkImageryProvider = new Cesium.UrlTemplateImageryProvider({
-      url: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png",
-      subdomains: ["a", "b", "c", "d"],
-      credit: new Cesium.Credit(
-        "Map tiles by CARTO, under CC BY 3.0. Data by OpenStreetMap, under ODbL."
-      ),
-    });
-    viewer.imageryLayers.addImageryProvider(darkImageryProvider);
+      viewer = new Cesium.Viewer(container, {
+        animation: false,
+        baseLayerPicker: false,
+        fullscreenButton: false,
+        geocoder: false,
+        homeButton: false,
+        infoBox: false,
+        navigationHelpButton: false,
+        navigationInstructionsInitiallyVisible: false,
+        sceneModePicker: false,
+        selectionIndicator: false,
+        timeline: false,
+        vrButton: false,
+        baseLayer: baseLayer,
+        terrainProvider: terrainProvider,
+      });
 
-    // Create a CustomDataSource for temperature grid (render below stations)
-    const tempSource = new Cesium.CustomDataSource("temperatureGrid");
-    viewer.dataSources.add(tempSource);
-    tempSourceRef.current = tempSource;
+      viewerRef.current = viewer;
+      viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#0A192F");
 
-    const salinitySource = new Cesium.CustomDataSource("salinityGrid");
-    viewer.dataSources.add(salinitySource);
-    salinitySourceRef.current = salinitySource;
+      // Create a CustomDataSource for temperature grid (render below stations)
+      const tempSource = new Cesium.CustomDataSource("temperatureGrid");
+      viewer.dataSources.add(tempSource);
+      tempSourceRef.current = tempSource;
 
-    const currentsSource = new Cesium.CustomDataSource("currentsGrid");
-    viewer.dataSources.add(currentsSource);
-    currentsSourceRef.current = currentsSource;
+      const salinitySource = new Cesium.CustomDataSource("salinityGrid");
+      viewer.dataSources.add(salinitySource);
+      salinitySourceRef.current = salinitySource;
 
-    // Create a CustomDataSource for stations to group them cleanly
-    const stationSource = new Cesium.CustomDataSource("oceanStations");
-    viewer.dataSources.add(stationSource);
-    stationSourceRef.current = stationSource;
+      const currentsSource = new Cesium.CustomDataSource("currentsGrid");
+      viewer.dataSources.add(currentsSource);
+      currentsSourceRef.current = currentsSource;
 
-    const oceanAlertsDataSource = new Cesium.CustomDataSource("oceanAlerts");
-    viewer.dataSources.add(oceanAlertsDataSource);
-    oceanAlertsDataSourceRef.current = oceanAlertsDataSource;
+      // Create a CustomDataSource for stations to group them cleanly
+      const stationSource = new Cesium.CustomDataSource("oceanStations");
+      viewer.dataSources.add(stationSource);
+      stationSourceRef.current = stationSource;
 
-    flyToBayOfBengal(viewer);
+      const oceanAlertsDataSource = new Cesium.CustomDataSource("oceanAlerts");
+      viewer.dataSources.add(oceanAlertsDataSource);
+      oceanAlertsDataSourceRef.current = oceanAlertsDataSource;
+
+      flyToBayOfBengal(viewer);
+    };
+
+    initCesium();
 
     return () => {
-      if (!viewer.isDestroyed()) {
+      isMounted = false;
+      if (viewer && !viewer.isDestroyed()) {
         viewer.destroy();
       }
       viewerRef.current = null;
