@@ -1,6 +1,10 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --color-ocean-dark: #071A2B;
+  --color-ocean-panel: #0B2A3F;
+  --color-ocean-accent: #00C2D1;
+}
 
 @layer base {
   body {
